@@ -1,0 +1,8 @@
+{
+  "name": "configurations",
+  "version": "0.118",
+  "depends_on": [
+    "shared"
+  ],
+  "init_after": []
+}

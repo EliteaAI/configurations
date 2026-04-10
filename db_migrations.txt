@@ -1,0 +1,15 @@
+# Add needed migrations (SQL + curl/task-based) here
+# Try to make migrations safe to run multiple times (e.g. "IF NOT EXISTS")
+# When release tags are moved - comment with release version will be added
+
+# 1.7.0 -> 2.0.0-beta
+
+# Remove length limits in 'configuration' table
+ALTER TABLE {pid}.configuration ALTER COLUMN type TYPE VARCHAR;
+ALTER TABLE {pid}.configuration ALTER COLUMN section TYPE VARCHAR;
+ALTER TABLE {pid}.configuration ALTER COLUMN label TYPE VARCHAR;
+ALTER TABLE {pid}.configuration ALTER COLUMN elitea_title TYPE VARCHAR;
+
+# Migration: name_generation_image (str) -> supports_vision (bool) for LLM models
+UPDATE {pid}.configuration SET data = jsonb_set(data, '{{supports_vision}}', 'true'::jsonb) WHERE section = 'llm' AND type = 'llm_model' AND data ? 'name' AND NOT (data ? 'supports_vision');
+UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE section = 'llm' AND type = 'llm_model' AND data ? 'name_generation_image';
