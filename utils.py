@@ -284,18 +284,11 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
                     ).first()
 
             if not config:
-                import json as _json
-                # If private credential in team project, raise structured error
-                if private and project_id != current_project_id:
-                    error_data = {
-                        'error_type': 'private_credential_not_found',
-                        'credential_id': title,
-                    }
-                    raise LookupError(_json.dumps(error_data))
-
-                # Default error message
-                raise LookupError(f"Configuration with title '{title}' not found for project_id {project_id} "
-                                  f"or shared in public_project_id {public_project_id}")
+                raise LookupError(
+                    f"Configuration with title '{title}' not found for project_id {project_id} "
+                    f"or shared in public_project_id {public_project_id}",
+                    {"personal_project_lookup": bool(private), "elitea_title": title}
+                )
 
             # Check if this is a private pgvector config being used in a shared project
             if config.type == 'pgvector':
