@@ -13,6 +13,15 @@ class API(APIBase):
         '<int:project_id>/<int:config_id>'
     ]
 
+    @auth.decorators.check_api(
+        {
+            "permissions": ["configurations.configuration.details"],
+            "recommended_roles": {
+                c.ADMINISTRATION_MODE: {"admin": True, "editor": True, "viewer": True},
+                c.DEFAULT_MODE: {"admin": True, "editor": True, "viewer": True},
+            },
+        }
+    )
     def get(self, project_id: int, config_id: int, **kwargs):
         public_project_id = get_public_project_id()
 

@@ -1,7 +1,7 @@
 from flask import request
 
 from tools import api_tools
-from ...local_tools import APIBase, current_user, log
+from ...local_tools import APIBase, current_user, log, auth, config as c
 from ...utils import create_configuration, get_configurations
 from ...exceptions import ConfigurationError
 
@@ -11,6 +11,15 @@ class API(APIBase):
         '<int:project_id>'
     ]
 
+    @auth.decorators.check_api(
+        {
+            "permissions": ["configurations.configurations.list"],
+            "recommended_roles": {
+                c.ADMINISTRATION_MODE: {"admin": True, "editor": True, "viewer": True},
+                c.DEFAULT_MODE: {"admin": True, "editor": True, "viewer": True},
+            },
+        }
+    )
     @api_tools.endpoint_metrics
     def get(self, project_id: int, **kwargs):
         """Get configurations with pagination, with optional separate shared configurations.
@@ -64,6 +73,15 @@ class API(APIBase):
 
         return response, 200
 
+    @auth.decorators.check_api(
+        {
+            "permissions": ["configurations.configuration.create"],
+            "recommended_roles": {
+                c.ADMINISTRATION_MODE: {"admin": True, "editor": True, "viewer": False},
+                c.DEFAULT_MODE: {"admin": True, "editor": True, "viewer": False},
+            },
+        }
+    )
     @api_tools.endpoint_metrics
     def post(self, project_id: int, **kwargs):
         """Create a new configuration with structured error handling."""
