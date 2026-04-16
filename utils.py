@@ -252,7 +252,7 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
     if already_done is None:
         already_done = []
     log.info(f'expand_configuration called with {payload=}, {current_project_id=}, {user_id=}, {already_done=}')
-    title = payload.get('elitea_title')
+    title = payload.get('elitea_title') or payload.get('alita_title')
     if title:
         if title in already_done:
             raise ValueError(f"Recursion error, please validate your configuration ID: {title}")
