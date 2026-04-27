@@ -158,6 +158,24 @@ class ConfigurationCreate(BaseModel):
         raise ValueError("No model or validation_func defined for this configuration type")
 
     @model_validator(mode='after')
+    def validate_ai_credentials_for_user_models(self):
+        if self.source != SourceTypes.user:
+            return self
+
+        entry: ConfigTypeRegistryItem = CONFIG_TYPE_REGISTRY.get(self.type)
+        if not entry or entry.section not in ['llm', 'embedding', 'image_generation']:
+            return self
+
+        ai_credentials = self.data.get('ai_credentials')
+        if not ai_credentials:
+            raise ValueError(
+                f"AI credentials are required for user-created {entry.section} models. "
+                f"Please provide valid credentials to create this model."
+            )
+
+        return self
+
+    @model_validator(mode='after')
     def enforce_service_prompt_title(self):
         if self.type != 'service_prompt':
             return self
