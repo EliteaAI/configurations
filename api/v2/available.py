@@ -39,6 +39,14 @@ class API(APIBase):
                 # Get custom button label for check_connection/load tools
                 check_connection_label = metadata.get('check_connection_label')
 
+                if entry.section in ['llm', 'embedding', 'image_generation']:
+                    data_schema = config_schema['properties']['data']
+                    if 'properties' in data_schema and 'ai_credentials' in data_schema['properties']:
+                        if 'required' not in data_schema:
+                            data_schema['required'] = []
+                        if 'ai_credentials' not in data_schema['required']:
+                            data_schema['required'].append('ai_credentials')
+
             result.append({
                 "type": entry.type,
                 "section": entry.section,
