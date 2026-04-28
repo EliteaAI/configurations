@@ -248,6 +248,7 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
     If 'private' is True, searches by personal project id (derived from user_id) and 'elitea_title'.
     Raises ValueError if required fields are missing or configuration not found.
     Prevents infinite recursion by tracking already processed titles in already_done.
+    If payload contains 'type', the lookup is scoped to configurations of that type.
     """
     if already_done is None:
         already_done = []
@@ -271,16 +272,19 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
 
             config = None
 
+            type_filter = {'type': payload['type']} if payload.get('type') else {}
+
             # First, try to find in the primary project (current or personal)
             with db.get_session(project_id) as session:
-                config = session.query(Configuration).filter_by(elitea_title=title).first()
+                config = session.query(Configuration).filter_by(elitea_title=title, **type_filter).first()
 
             # If not found and we have a public_project_id, try to find shared configurations there
             if not config and public_project_id and project_id != public_project_id:
                 with db.get_session(public_project_id) as public_session:
                     config = public_session.query(Configuration).filter_by(
                         elitea_title=title,
-                        shared=True
+                        shared=True,
+                        **type_filter,
                     ).first()
 
             if not config:
