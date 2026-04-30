@@ -92,7 +92,7 @@ class ConfigurationCreate(BaseModel):
     uuid: str | UUID4 | None = None
     meta: dict[str, Any] = {}
     source: SourceTypes = SourceTypes.user
-    author_id: int = None
+    author_id: int | None = None
     data: dict[str, Any]
 
     @field_validator('elitea_title', mode='after')
