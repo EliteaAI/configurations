@@ -163,7 +163,7 @@ class ConfigurationCreate(BaseModel):
             return self
 
         entry: ConfigTypeRegistryItem = CONFIG_TYPE_REGISTRY.get(self.type)
-        if not entry or entry.section not in ['llm', 'embedding', 'image_generation']:
+        if not entry or entry.section not in ['llm', 'embedding', 'image_generation', 'asr']:
             return self
 
         ai_credentials = self.data.get('ai_credentials')
