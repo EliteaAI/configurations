@@ -1,8 +1,8 @@
 from .common_utils import get_public_project_id
 from .local_tools import db, VaultClient
 from .models.configuration import Configuration
-from .models.pd.llm_model import LlmModelList, EmbeddingModelList, VectorStorageModelList, ImageGenerationModelList
-from .utils import get_configuration_llm_models_with_limits_query, get_embedding_model_query, get_vector_storage_query, get_image_generation_model_query
+from .models.pd.llm_model import LlmModelList, EmbeddingModelList, VectorStorageModelList, ImageGenerationModelList, ASRModelList
+from .utils import get_configuration_llm_models_with_limits_query, get_embedding_model_query, get_vector_storage_query, get_image_generation_model_query, get_asr_model_query
 
 
 from pylon.core.tools import log
@@ -86,6 +86,16 @@ class ImageGenerationModelHandler(ConfigurationModelHandler):
         return ImageGenerationModelList
 
 
+class ASRModelHandler(ConfigurationModelHandler):
+    """Handler for ASR (Speech Recognition) models"""
+
+    def get_query_method(self):
+        return get_asr_model_query
+
+    def get_model_class(self):
+        return ASRModelList
+
+
 class ModelConfigurationService:
     """Service class to orchestrate model configuration retrieval"""
 
@@ -94,6 +104,7 @@ class ModelConfigurationService:
         'embedding': EmbeddingModelHandler,
         'vectorstorage': VectorStorageModelHandler,
         'image_generation': ImageGenerationModelHandler,
+        'asr': ASRModelHandler,
     }
 
     def __init__(self, project_id: int):
