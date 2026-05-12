@@ -461,6 +461,28 @@ def get_asr_model_query(session, project_id: int, filters: list, section: str = 
     return query
 
 
+def get_tts_model_query(session, project_id: int, filters: list, section: str = "tts"):
+    """
+    Build a query to retrieve TTS (Text-to-Speech) model configurations.
+    """
+    query = (
+        session.query(
+            Configuration.project_id,
+            Configuration.shared,
+            Configuration.data["name"].label("name"),
+            Configuration.label.label("display_name"),
+        )
+        .distinct()
+        .filter(
+            Configuration.project_id == project_id,
+            Configuration.status_ok == True,
+            Configuration.section == section,
+            *filters
+        )
+    )
+    return query
+
+
 def extract_nested_field_info(schema_data: dict) -> dict:
     """
     Extract information about nested configuration fields from schema.
