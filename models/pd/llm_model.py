@@ -143,6 +143,37 @@ class ASRModelList(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class TTSModel(BaseModel):
+    """Configuration for Text-to-Speech (TTS) models."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "metadata": {
+                "label": "Text to Speech (TTS) Model",
+                "section": "tts",
+                "type": "tts_model"
+            }
+        }
+    )
+
+    name: str
+
+    ai_credentials: Optional[AiCredentials] = Field(
+        default=None,
+        json_schema_extra={'configuration_sections': ['ai_credentials']}
+    )
+
+
+class TTSModelList(BaseModel):
+    """Response model for TTS model listings."""
+    name: str
+    display_name: str
+    project_id: int
+    shared: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class VectorStorageModelList(BaseModel):
     name: str = Field(alias='elitea_title')
     project_id: int

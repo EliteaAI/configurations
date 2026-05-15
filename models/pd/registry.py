@@ -4,7 +4,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from .environment_settings import EnvironmentSettings
-from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel
+from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .service_prompt import ServicePrompt
 from ...local_tools import log
 
@@ -140,6 +140,12 @@ register_config_type(
     type_name='asr_model',
     section='asr',
     model=ASRModel
+)
+
+register_config_type(
+    type_name='tts_model',
+    section='tts',
+    model=TTSModel
 )
 
 register_config_type(
