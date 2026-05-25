@@ -155,6 +155,8 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
         config: Configuration = session.query(Configuration).filter_by(id=config_id).first()
         if not config:
             raise ValueError(f"Configuration with id {config_id} not found")
+
+        old_elitea_title = config.elitea_title
         
         # If data is being updated, handle secret fields
         if 'data' in update_payload:
@@ -229,6 +231,16 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
             result = ConfigurationDetails.model_validate(config).model_dump(mode='json')
             if status_changed:
                 event_manager.fire_event('configuration_status_changed', result)
+            new_elitea_title = config.elitea_title
+            if 'elitea_title' in update_payload and old_elitea_title != new_elitea_title:
+                event_manager.fire_event('configuration_renamed', {
+                    'project_id': project_id,
+                    'config_id': config_id,
+                    'old_elitea_title': old_elitea_title,
+                    'new_elitea_title': new_elitea_title,
+                    'section': config.section,
+                    'private': False,
+                })
             return result
         except IntegrityError as ie:
             elitea_title = update_payload.get('elitea_title', None)
