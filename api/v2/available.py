@@ -47,6 +47,17 @@ class API(APIBase):
                         if 'ai_credentials' not in data_schema['required']:
                             data_schema['required'].append('ai_credentials')
 
+                # Handle fields marked as required_with_default
+                # This allows SDK to define fields that show as required (asterisk) but have default values
+                data_schema = config_schema['properties'].get('data', {})
+                if 'properties' in data_schema:
+                    for field_name, field_schema in data_schema.get('properties', {}).items():
+                        if field_schema.pop('required_with_default', False):
+                            if 'required' not in data_schema:
+                                data_schema['required'] = []
+                            if field_name not in data_schema['required']:
+                                data_schema['required'].append(field_name)
+
             result.append({
                 "type": entry.type,
                 "section": entry.section,

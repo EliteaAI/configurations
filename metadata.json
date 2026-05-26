@@ -4,7 +4,5 @@
   "depends_on": [
     "shared"
   ],
-  "init_after": [],
-  "git_source": "https://github.com/EliteaAI/configurations.git",
-  "git_head": "923d6d273c0e0c1f437356982fbbc35c1b58f5bb"
+  "init_after": []
 }
