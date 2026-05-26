@@ -5,7 +5,7 @@ class Event:
     @web.event('configuration_created')
     def configuration_created(self, context, event, payload: dict):
         configuration_type = payload['type']
-        if configuration_type == 'pgvector':
+        if configuration_type in ('pgvector', 'asr_model', 'tts_model'):
             self.update_configuration_rpc(
                 project_id=payload['project_id'],
                 config_id=payload['id'],

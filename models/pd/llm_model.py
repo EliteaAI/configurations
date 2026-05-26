@@ -79,6 +79,26 @@ class ImageGenerationModel(BaseModel):
         json_schema_extra={'configuration_sections': ['ai_credentials']}
     )
 
+class ASRModel(BaseModel):
+    """Configuration for Automatic Speech Recognition (ASR) models."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "metadata": {
+                "label": "Speech Recognition (ASR) Model",
+                "section": "asr",
+                "type": "asr_model"
+            }
+        }
+    )
+
+    name: str
+
+    ai_credentials: Optional[AiCredentials] = Field(
+        default=None,
+        json_schema_extra={'configuration_sections': ['ai_credentials']}
+    )
+
 
 class LlmModelList(BaseModel):
     name: str
@@ -105,6 +125,47 @@ class EmbeddingModelList(BaseModel):
 
 class ImageGenerationModelList(BaseModel):
     """Response model for image generation model listings."""
+    name: str
+    display_name: str
+    project_id: int
+    shared: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ASRModelList(BaseModel):
+    """Response model for ASR model listings."""
+    name: str
+    display_name: str
+    project_id: int
+    shared: bool = False
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TTSModel(BaseModel):
+    """Configuration for Text-to-Speech (TTS) models."""
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "metadata": {
+                "label": "Text to Speech (TTS) Model",
+                "section": "tts",
+                "type": "tts_model"
+            }
+        }
+    )
+
+    name: str
+
+    ai_credentials: Optional[AiCredentials] = Field(
+        default=None,
+        json_schema_extra={'configuration_sections': ['ai_credentials']}
+    )
+
+
+class TTSModelList(BaseModel):
+    """Response model for TTS model listings."""
     name: str
     display_name: str
     project_id: int
