@@ -1,7 +1,8 @@
 from flask import request
 
 from tools import api_tools
-from ...local_tools import APIBase, current_user, log, auth, config as c
+from ...local_tools import APIBase, current_user, log, auth, config as c, register_openapi
+from ...models.pd.configuration import ConfigurationCreateBase
 from ...utils import create_configuration, get_configurations
 from ...exceptions import ConfigurationError
 
@@ -11,6 +12,32 @@ class API(APIBase):
         '<int:project_id>'
     ]
 
+    @register_openapi(
+        name="List Configurations",
+        description="List project configurations with filtering, pagination, and optional shared entries.",
+        parameters=[
+            {"name": "type", "in": "query", "schema": {"type": "string"},
+             "description": "Filter by configuration type. Can be passed multiple times."},
+            {"name": "section", "in": "query", "schema": {"type": "string"},
+             "description": "Filter by section. Can be passed multiple times."},
+            {"name": "offset", "in": "query", "schema": {"type": "integer", "default": 0},
+             "description": "Pagination offset for project configurations."},
+            {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 20},
+             "description": "Pagination limit for project configurations."},
+            {"name": "include_shared", "in": "query", "schema": {"type": "boolean", "default": False},
+             "description": "Include shared configurations."},
+            {"name": "shared_offset", "in": "query", "schema": {"type": "integer", "default": 0},
+             "description": "Pagination offset for shared configurations."},
+            {"name": "shared_limit", "in": "query", "schema": {"type": "integer", "default": 20},
+             "description": "Pagination limit for shared configurations."},
+            {"name": "sort_by", "in": "query", "schema": {"type": "string", "default": "created_at"},
+             "description": "Sort field."},
+            {"name": "sort_order", "in": "query", "schema": {"type": "string", "default": "desc"},
+             "description": "Sort order (asc or desc)."},
+            {"name": "query", "in": "query", "schema": {"type": "string"},
+             "description": "Search string for configuration label."},
+        ],
+    )
     @auth.decorators.check_api(
         {
             "permissions": ["configurations.configurations.list"],
@@ -73,6 +100,15 @@ class API(APIBase):
 
         return response, 200
 
+    @register_openapi(
+        name="Create Configuration",
+        description="Create a new configuration for the project.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+        ],
+        request_body=ConfigurationCreateBase,
+    )
     @auth.decorators.check_api(
         {
             "permissions": ["configurations.configuration.create"],

@@ -1,7 +1,10 @@
 from copy import deepcopy
-from flask import request
+from typing import Any
 
-from ...local_tools import APIBase
+from flask import request
+from pydantic import RootModel, ConfigDict
+
+from ...local_tools import APIBase, register_openapi
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 from ...utils import expand_configuration
 from ...local_tools import VaultClient
@@ -10,11 +13,40 @@ from tools import auth
 from pylon.core.tools import log
 
 
+class CheckConnectionPayload(RootModel[dict[str, Any]]):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "gpt-5.1",
+                    "ai_credentials": {
+                        "elitea_title": "azure_creds_public",
+                        "private": False
+                    },
+                    "context_window": 400000,
+                    "max_output_tokens": 128000
+                }
+            ]
+        }
+    )
+
+
 class API(APIBase):
     url_params = [
         '<int:project_id>/<string:config_type>'
     ]
 
+    @register_openapi(
+        name="Check Configuration Connection",
+        description="Validate connection for a configuration payload by configuration type.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+            {"name": "config_type", "in": "path", "schema": {"type": "string"},
+             "description": "Configuration type to validate."},
+        ],
+        request_body=CheckConnectionPayload,
+    )
     def post(self, project_id: int, config_type: str, **kwargs):
         model = CONFIG_TYPE_REGISTRY.get(config_type)
         if not model:

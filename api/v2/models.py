@@ -51,6 +51,11 @@ class API(APIBase):
         service = ModelConfigurationService(project_id)
         return service.get_models(section, include_shared)
 
+    @register_openapi(
+        name="Set Default Model",
+        description="Set the default model for a section and target project.",
+        request_body=SetDefaultModel,
+    )
     @api_tools.endpoint_metrics
     def post(self, project_id: int, **kwargs):
         try:

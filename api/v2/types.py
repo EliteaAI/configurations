@@ -1,4 +1,4 @@
-from ...local_tools import db, APIBase, serialize, log
+from ...local_tools import db, APIBase, serialize, log, register_openapi
 from ...models.configuration import Configuration
 
 
@@ -7,6 +7,16 @@ class API(APIBase):
         '<int:project_id>'
     ]
 
+    @register_openapi(
+        name="List Configuration Types",
+        description="List distinct configuration types for a project, filtered by section.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+            {"name": "section", "in": "query", "schema": {"type": "string", "default": "credentials"},
+             "description": "Filter by configuration section."},
+        ],
+    )
     def get(self, project_id: int, **kwargs):
         try:
             filter_section = kwargs.get('section', 'credentials')
