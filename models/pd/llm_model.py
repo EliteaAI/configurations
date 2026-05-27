@@ -186,3 +186,16 @@ class SetDefaultModel(BaseModel):
     name: str
     target_project_id: int
     section: Optional[str] = Field(default='llm')
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "examples": [
+                {
+                    "name": "gpt-5.1",
+                    "target_project_id": 2,
+                    "section": "llm"
+                }
+            ]
+        }
+    )
+

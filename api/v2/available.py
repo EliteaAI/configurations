@@ -2,7 +2,7 @@ from copy import deepcopy
 
 from flask import request
 
-from ...local_tools import APIBase
+from ...local_tools import APIBase, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 #
@@ -12,6 +12,14 @@ class API(APIBase):
         '',
         '<int:project_id>',
     ]
+    @register_openapi(
+        name="List Available Configuration Types",
+        description="List available configuration types and their schemas.",
+        parameters=[
+            {"name": "section", "in": "query", "schema": {"type": "string"},
+             "description": "Filter by section. Can be passed multiple times."},
+        ],
+    )
     def get(self, **kwargs):
         result = []
         section_filter = request.args.getlist("section")

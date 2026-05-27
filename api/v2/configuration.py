@@ -2,7 +2,7 @@ from flask import request
 
 from ...common_utils import get_public_project_id
 from ...exceptions import ConfigurationError
-from ...local_tools import db, APIBase, event_manager, log, auth, config as c, rpc_manager
+from ...local_tools import db, APIBase, event_manager, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
 from ...utils import update_configuration, get_options_for_nested_fields
@@ -13,6 +13,16 @@ class API(APIBase):
         '<int:project_id>/<int:config_id>'
     ]
 
+    @register_openapi(
+        name="Get Configuration",
+        description="Get a single configuration by id.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+            {"name": "config_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Configuration identifier."},
+        ],
+    )
     @auth.decorators.check_api(
         {
             "permissions": ["configurations.configuration.details"],
@@ -43,6 +53,17 @@ class API(APIBase):
 
             return config_data, 200
 
+    @register_openapi(
+        name="Update Configuration",
+        description="Update an existing configuration by id.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+            {"name": "config_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Configuration identifier."},
+        ],
+        request_body=ConfigurationUpdate,
+    )
     @auth.decorators.check_api(
         {
             "permissions": ["configurations.configuration.update"],
@@ -73,6 +94,16 @@ class API(APIBase):
             return {"error": "Configuration not found"}, 404
         return ConfigurationDetails.model_validate(updated_config).model_dump(mode='json'), 200
 
+    @register_openapi(
+        name="Delete Configuration",
+        description="Delete a configuration by id.",
+        parameters=[
+            {"name": "project_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Project identifier."},
+            {"name": "config_id", "in": "path", "schema": {"type": "integer"},
+             "description": "Configuration identifier."},
+        ],
+    )
     @auth.decorators.check_api(
         {
             "permissions": ["configurations.configuration.delete"],
