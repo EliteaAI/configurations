@@ -118,7 +118,7 @@ def create_if_not_exists(payload: dict) -> tuple[dict, bool]:
     Returns (config, created: bool)
     """
     from .local_tools import log
-    log.info(f'create_if_not_exists called with elitea_title={payload.get("elitea_title")}')
+    log.debug(f'create_if_not_exists called with elitea_title={payload.get("elitea_title")}')
 
     project_id = payload.get('project_id')
     elitea_title = payload.get('elitea_title')
@@ -251,7 +251,7 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
     """
     if already_done is None:
         already_done = []
-    log.info(f'expand_configuration called with {payload=}, {current_project_id=}, {user_id=}, {already_done=}')
+    log.debug(f'expand_configuration called with {payload=}, {current_project_id=}, {user_id=}, {already_done=}')
     title = payload.get('elitea_title') or payload.get('alita_title')
     if title:
         if title in already_done:
