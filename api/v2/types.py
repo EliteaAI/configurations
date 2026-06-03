@@ -16,6 +16,7 @@ class API(APIBase):
             {"name": "section", "in": "query", "schema": {"type": "string", "default": "credentials"},
              "description": "Filter by configuration section."},
         ],
+        available_to_users=True,
     )
     def get(self, project_id: int, **kwargs):
         try:

@@ -37,6 +37,7 @@ class API(APIBase):
             {"name": "query", "in": "query", "schema": {"type": "string"},
              "description": "Search string for configuration label."},
         ],
+        available_to_users=True,
     )
     @auth.decorators.check_api(
         {
@@ -108,6 +109,7 @@ class API(APIBase):
              "description": "Project identifier."},
         ],
         request_body=ConfigurationCreateBase,
+        available_to_users=True,
     )
     @auth.decorators.check_api(
         {

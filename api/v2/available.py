@@ -19,6 +19,7 @@ class API(APIBase):
             {"name": "section", "in": "query", "schema": {"type": "string"},
              "description": "Filter by section. Can be passed multiple times."},
         ],
+        available_to_users=True,
     )
     def get(self, **kwargs):
         result = []

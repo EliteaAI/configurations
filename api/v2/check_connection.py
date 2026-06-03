@@ -46,6 +46,7 @@ class API(APIBase):
              "description": "Configuration type to validate."},
         ],
         request_body=CheckConnectionPayload,
+        available_to_users=True,
     )
     def post(self, project_id: int, config_type: str, **kwargs):
         model = CONFIG_TYPE_REGISTRY.get(config_type)

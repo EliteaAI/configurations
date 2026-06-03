@@ -23,6 +23,7 @@ class API(APIBase):
             {"name": "section", "in": "query", "schema": {"type": "string", "default": "llm"},
              "description": "Filter by section (llm, embedding)"},
         ],
+        available_to_users=True,
     )
     @api_tools.endpoint_metrics
     def get(self, project_id: int, **kwargs):
@@ -55,6 +56,7 @@ class API(APIBase):
         name="Set Default Model",
         description="Set the default model for a section and target project.",
         request_body=SetDefaultModel,
+        available_to_users=True,
     )
     @api_tools.endpoint_metrics
     def post(self, project_id: int, **kwargs):

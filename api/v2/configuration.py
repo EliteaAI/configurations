@@ -22,6 +22,7 @@ class API(APIBase):
             {"name": "config_id", "in": "path", "schema": {"type": "integer"},
              "description": "Configuration identifier."},
         ],
+        available_to_users=True,
     )
     @auth.decorators.check_api(
         {
@@ -63,6 +64,7 @@ class API(APIBase):
              "description": "Configuration identifier."},
         ],
         request_body=ConfigurationUpdate,
+        available_to_users=True,
     )
     @auth.decorators.check_api(
         {
@@ -103,6 +105,7 @@ class API(APIBase):
             {"name": "config_id", "in": "path", "schema": {"type": "integer"},
              "description": "Configuration identifier."},
         ],
+        available_to_users=True,
     )
     @auth.decorators.check_api(
         {
