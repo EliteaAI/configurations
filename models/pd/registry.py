@@ -5,7 +5,6 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from .environment_settings import EnvironmentSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
-from .pgvector import PgVectorConfig
 from .service_prompt import ServicePrompt
 from ...local_tools import log
 
@@ -159,11 +158,4 @@ register_config_type(
     type_name='environment_settings',
     section='environment_settings',
     model=EnvironmentSettings,
-)
-
-register_config_type(
-    type_name='pgvector',
-    section='vectorstorage',
-    model=PgVectorConfig,
-    check_connection_func='applications_configuration_check_connection',
 )
