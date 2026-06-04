@@ -374,6 +374,7 @@ def get_configuration_llm_models_with_limits_query(session, project_id: int, fil
             # NOTE: Fallback to legacy "mid_tier" for backward compatibility with existing configurations.
             #       Consider deprecating this fallback once all configs have migrated to "high_tier".
             func.coalesce(Configuration.data["high_tier"], Configuration.data["mid_tier"], 'false').label("high_tier"),
+            func.coalesce(Configuration.data["openai_compatible"], 'false').cast(Boolean).label("openai_compatible"),
         )
         .distinct()
         .join(
