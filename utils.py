@@ -263,7 +263,7 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
     """
     if already_done is None:
         already_done = []
-    _secret_keys = {"client_secret", "access_token", "refresh_token", "password", "api_key", "token"}
+    _secret_keys = {"client_secret", "access_token", "refresh_token", "password", "api_key", "token", "private_token"}
     safe_payload = {k: "***" if k in _secret_keys else v for k, v in payload.items()}
     log.info(f'expand_configuration called with {safe_payload=}, {current_project_id=}, {user_id=}, {already_done=}')
     title = payload.get('elitea_title') or payload.get('alita_title')
