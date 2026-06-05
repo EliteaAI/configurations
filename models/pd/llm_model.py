@@ -34,6 +34,7 @@ class LlmModel(BaseModel):
     )
     low_tier: Optional[bool] = False
     high_tier: Optional[bool] = False
+    openai_compatible: Optional[bool] = False
 
     ai_credentials: Optional[AiCredentials] = Field(
         default=None,
@@ -111,6 +112,7 @@ class LlmModelList(BaseModel):
     supports_vision: Optional[bool] = True
     low_tier: Optional[bool] = False
     high_tier: Optional[bool] = False
+    openai_compatible: Optional[bool] = False
 
     model_config = ConfigDict(from_attributes=True)
 
