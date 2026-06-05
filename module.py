@@ -67,6 +67,10 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "migrate_configuration_data_alita_title", task
             )
+            danger_sanitize_secrets = self._wrap_admin_task(Method, "danger_sanitize_secrets_with_value", self)
+            this.for_module("admin").module.register_admin_task(
+                "danger_sanitize_secrets_with_value", danger_sanitize_secrets
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -74,6 +78,9 @@ class Module(module.ModuleModel):
         try:
             this.for_module("admin").module.unregister_admin_task(
                 "migrate_configuration_data_alita_title", self.migrate_configuration_data_alita_title
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "danger_sanitize_secrets_with_value", self.danger_sanitize_secrets_with_value
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)

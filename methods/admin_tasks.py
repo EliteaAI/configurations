@@ -24,9 +24,62 @@ from pylon.core.tools import log  # pylint: disable=E0611,E0401,W0611
 from pylon.core.tools import web  # pylint: disable=E0611,E0401,W0611
 from sqlalchemy.orm.attributes import flag_modified
 
-from tools import db
+from tools import db, VaultClient
 from ..models.configuration import Configuration
+from ..common_utils import get_public_project_id
 
+
+SYSTEM_SECRET_KEYS = {
+    "auth_token",
+    "default_llm_low_tier_model_name",
+    "default_llm_low_tier_model_project_id",
+    "default_llm_model_name",
+    "default_llm_model_project_id",
+    "default_llm_high_tier_model_name",
+    "default_llm_high_tier_model_project_id",
+    "pgvector_project_connstr",
+    "pgvector_project_password",
+    "project_llm_key",
+}
+
+SENSITIVE_FIELD_PATTERNS = {
+    # Original
+    'secret', 'access_key', 'api_key', 'refresh_token', 'private_token',
+    'credential', 'secret_token', 'key', 'client_secret', 'token',
+    'password', 'access_token', 'secret_key',
+
+    # Auth tokens
+    'auth_token', 'bearer_token', 'id_token', 'session_token',
+    'csrf_token', 'oauth_token', 'jwt', 'jwt_token',
+
+    # Keys & secrets
+    'private_key', 'public_key', 'signing_key', 'encryption_key',
+    'hmac_key', 'aes_key', 'rsa_key', 'api_secret',
+
+    # Passwords & credentials
+    'passwd', 'passphrase', 'pin', 'credentials',
+    'username_password', 'user_password',
+
+    # IDs & identifiers
+    'client_id', 'app_id', 'app_key', 'app_secret',
+    'consumer_key', 'consumer_secret',
+
+    # Database & connection
+    'db_password', 'database_password', 'connection_string',
+    'db_pass', 'db_pwd',
+
+    # Cloud / service-specific
+    'aws_access_key_id', 'aws_secret_access_key', 'aws_session_token',
+    'azure_client_secret', 'gcp_key', 'service_account_key',
+
+    # Certificates & SSH
+    'certificate', 'cert', 'private_cert', 'ssh_key', 'pem',
+
+    # Misc
+    'webhook_secret', 'signing_secret', 'encryption_secret',
+    'master_key', 'root_password', 'admin_password',
+    'pat', 'personal_access_token', 'deploy_key',
+}
 
 class Method:  # pylint: disable=E1101,R0903,W0201
     """
@@ -150,3 +203,224 @@ class Method:  # pylint: disable=E1101,R0903,W0201
             prefix, "would migrate" if dry_run else "migrated", total_migrated, round(end_ts - start_ts, 2)
         )
         return {"migrated": total_migrated, "dry_run": dry_run}
+
+    @web.method()
+    def danger_sanitize_secrets_with_value(self, *args, **kwargs):
+        """Admin task: sanitize secrets and credentials for staging environments.
+
+        Rewrites non-system secrets and credentials with a replacement value to remove
+        production data while preserving essential system configuration.
+
+        This task is intended for sanitizing production database dumps before use in
+        staging environments. It replaces sensitive data (API keys, tokens, passwords)
+        with a placeholder value while preserving system-critical configuration.
+
+        PRESERVED secrets (not sanitized):
+            - auth_token
+            - default_llm_low_tier_model_name
+            - default_llm_low_tier_model_project_id
+            - default_llm_model_name
+            - default_llm_model_project_id
+            - pgvector_project_connstr
+            - pgvector_project_password
+            - project_llm_key
+
+        PRESERVED credentials (not sanitized):
+            - S3 API credentials with label starting with "Bearer -" (auto-created for Bearer auth)
+
+        Param format:
+            "project_id=<all|N>[;replacement_value=<value>][;dry_run][;skip_public=true|false]"
+
+        Examples:
+            "project_id=all;dry_run"                                    - dry run all projects
+            "project_id=all;replacement_value=STAGING_SECRET"           - live run with custom replacement
+            "project_id=34;dry_run"                                     - dry run single project
+            "project_id=all;skip_public=false"                          - include public project
+
+        Always run with dry_run first to verify expected changes.
+        """
+        param = kwargs.get("param", "") or ""
+        replacement_value = "CHANGEME"
+        dry_run = False
+        project_id_filter = None
+        project_id_found = False
+        skip_public = True
+
+        for seg in [s.strip() for s in param.split(";")]:
+            seg_lower = seg.lower()
+            if seg_lower.startswith("project_id="):
+                project_id_found = True
+                value = seg[len("project_id="):].strip()
+                if value.lower() != "all":
+                    try:
+                        project_id_filter = int(value)
+                    except ValueError:
+                        log.error("sanitize_staging_secrets: invalid project_id '%s'", value)
+                        return {"error": f"invalid project_id: '{value}'"}
+            elif seg_lower.startswith("replacement_value="):
+                replacement_value = seg[len("replacement_value="):].strip()
+            elif seg_lower == "dry_run":
+                dry_run = True
+            elif seg_lower.startswith("skip_public="):
+                skip_public = seg[len("skip_public="):].strip().lower() != "false"
+
+        if not project_id_found:
+            log.error(
+                "sanitize_staging_secrets: project_id= is required. "
+                "Format: project_id=<all|N>[;replacement_value=<value>][;dry_run][;skip_public=true|false]"
+            )
+            return {"error": "project_id= is required"}
+
+        prefix = "[DRY RUN] " if dry_run else ""
+        public_project_id = get_public_project_id() if skip_public else None
+
+        log.info(
+            "%sStarting sanitize_staging_secrets (replacement='%s', project_filter=%s, skip_public=%s)",
+            prefix, replacement_value, project_id_filter, skip_public
+        )
+        start_ts = time.time()
+
+        results = {
+            "secrets_sanitized": 0,
+            "credentials_sanitized": 0,
+            "projects_processed": 0,
+            "projects_skipped": 0,
+            "errors": [],
+            "dry_run": dry_run
+        }
+
+        try:
+            if project_id_filter is not None:
+                projects = [{"id": project_id_filter}]
+            else:
+                projects = self.context.rpc_manager.call.project_list() or []
+        except Exception:  # pylint: disable=W0703
+            log.exception("sanitize_staging_secrets: failed to list projects")
+            return {"error": "failed to list projects"}
+
+        for project in projects:
+            project_id = project['id']
+
+            if skip_public and public_project_id and project_id == public_project_id:
+                log.info("%sskipping public project %s", prefix, project_id)
+                results["projects_skipped"] += 1
+                continue
+
+            log.info("%sprocessing project %s", prefix, project_id)
+
+            try:
+                secrets_count, _ = _sanitize_project_secrets(
+                    project_id, replacement_value, dry_run, prefix
+                )
+                results["secrets_sanitized"] += secrets_count
+
+                creds_count = _sanitize_project_credentials(
+                    project_id, replacement_value, dry_run, prefix
+                )
+                results["credentials_sanitized"] += creds_count
+
+                results["projects_processed"] += 1
+
+            except Exception as e:  # pylint: disable=W0703
+                log.exception("%serror processing project %s", prefix, project_id)
+                results["errors"].append({"project_id": project_id, "error": str(e)})
+
+        end_ts = time.time()
+        log.info(
+            "%sExiting sanitize_staging_secrets — %s %s secret(s), "
+            "%s credential(s) across %s project(s) (duration = %ss)",
+            prefix, "would sanitize" if dry_run else "sanitized",
+            results["secrets_sanitized"],
+            results["credentials_sanitized"], results["projects_processed"],
+            round(end_ts - start_ts, 2)
+        )
+
+        return results
+
+
+def _sanitize_project_secrets(project_id, replacement_value, dry_run, prefix):
+    """Sanitize secrets for a single project.
+
+    Returns tuple: (secrets_sanitized_count, hidden_secrets_sanitized_count)
+    """
+    secrets_count = 0
+
+    try:
+        vault = VaultClient(project={"id": project_id})
+
+        secrets = vault.get_secrets()
+        if secrets:
+            sanitized = {}
+            for key, value in secrets.items():
+                if key in SYSTEM_SECRET_KEYS:
+                    sanitized[key] = value
+                    log.info("%sproject %s: [PRESERVE] secret '%s'", prefix, project_id, key)
+                else:
+                    sanitized[key] = replacement_value
+                    secrets_count += 1
+                    log.info("%sproject %s: [SANITIZE] secret '%s'", prefix, project_id, key)
+
+            if secrets_count > 0 and not dry_run:
+                vault.set_secrets(sanitized)
+
+    except Exception:  # pylint: disable=W0703
+        log.exception("%sproject %s: error sanitizing secrets", prefix, project_id)
+
+    return secrets_count, 0
+
+
+def _sanitize_project_credentials(project_id, replacement_value, dry_run, prefix):
+    """Sanitize credentials for a single project.
+
+    Returns credentials_sanitized_count.
+    """
+    credentials_count = 0
+
+    try:
+        with db.with_project_schema_session(project_id) as session:
+            credentials = session.query(Configuration).filter(
+                Configuration.section.in_(["credentials", "ai_credentials"])
+            ).all()
+
+            for cred in credentials:
+                if cred.type == "s3_api_credentials":
+                    label = cred.label or ""
+                    if label.startswith("Bearer -"):
+                        log.info(
+                            "%sproject %s: [PRESERVE] credential '%s' (Bearer S3 API)",
+                            prefix, project_id, cred.elitea_title
+                        )
+                        continue
+
+                data = cred.data or {}
+                if not data:
+                    continue
+
+                new_data = {}
+                fields_changed = False
+
+                for field, value in data.items():
+                    field_lower = field.lower()
+                    if any(pattern in field_lower for pattern in SENSITIVE_FIELD_PATTERNS):
+                        new_data[field] = replacement_value
+                        fields_changed = True
+                        log.info(
+                            "%sproject %s: [SANITIZE] credential '%s' field '%s'",
+                            prefix, project_id, cred.elitea_title, field
+                        )
+                    else:
+                        new_data[field] = value
+
+                if fields_changed:
+                    credentials_count += 1
+                    if not dry_run:
+                        cred.data = new_data
+                        flag_modified(cred, 'data')
+
+            if not dry_run:
+                session.commit()
+
+    except Exception:  # pylint: disable=W0703
+        log.exception("%sproject %s: error sanitizing credentials", prefix, project_id)
+
+    return credentials_count
