@@ -165,6 +165,30 @@ class TTSModel(BaseModel):
         json_schema_extra={'configuration_sections': ['ai_credentials']}
     )
 
+    @staticmethod
+    def check_connection(settings: dict) -> dict | str | None:
+        """
+        Test TTS configuration and fetch available voices from the provider.
+        
+        Returns:
+            - dict with {'voices': [...]} on success
+            - str with error message on failure
+            - None if check not supported
+        """
+        try:
+            from ...utils_tts_voices import fetch_tts_voices
+            
+            voices = fetch_tts_voices(settings)
+            
+            if voices:
+                return {'voices': voices}
+            else:
+                # No voices found - may indicate auth issue or unsupported provider
+                return "Could not fetch voices from provider. Please check credentials."
+                
+        except Exception as e:
+            return f"Error testing TTS configuration: {str(e)}"
+
 
 class TTSModelList(BaseModel):
     """Response model for TTS model listings."""
