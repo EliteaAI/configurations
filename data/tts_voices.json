@@ -1,0 +1,31 @@
+{
+  "litellm_standard": [
+    {"id": "alloy",   "name": "Alloy"},
+    {"id": "ash",     "name": "Ash"},
+    {"id": "coral",   "name": "Coral"},
+    {"id": "echo",    "name": "Echo"},
+    {"id": "fable",   "name": "Fable"},
+    {"id": "nova",    "name": "Nova"},
+    {"id": "onyx",    "name": "Onyx"},
+    {"id": "sage",    "name": "Sage"},
+    {"id": "shimmer", "name": "Shimmer"}
+  ],
+  "litellm_realtime_extra": [
+    {"id": "ballad", "name": "Ballad"},
+    {"id": "verse",  "name": "Verse"}
+  ],
+  "deepgram_aura": [
+    {"id": "aura-asteria-en", "name": "Asteria (English)"},
+    {"id": "aura-luna-en",    "name": "Luna (English)"},
+    {"id": "aura-stella-en",  "name": "Stella (English)"},
+    {"id": "aura-athena-en",  "name": "Athena (English)"},
+    {"id": "aura-hera-en",    "name": "Hera (English)"},
+    {"id": "aura-orion-en",   "name": "Orion (English)"},
+    {"id": "aura-arcas-en",   "name": "Arcas (English)"},
+    {"id": "aura-perseus-en", "name": "Perseus (English)"},
+    {"id": "aura-angus-en",   "name": "Angus (English)"},
+    {"id": "aura-orpheus-en", "name": "Orpheus (English)"},
+    {"id": "aura-helios-en",  "name": "Helios (English)"},
+    {"id": "aura-zeus-en",    "name": "Zeus (English)"}
+  ]
+}
