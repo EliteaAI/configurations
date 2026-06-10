@@ -39,16 +39,22 @@ except Exception as _load_err:
 # Public voice list constants (consumed by external callers)
 # ---------------------------------------------------------------------------
 
-# Standard OpenAI TTS voices — used by LiteLLM when routing to Azure OpenAI or
-# Google/Vertex AI (LiteLLM translates the voice ID at the proxy layer).
-LITELLM_TTS_VOICES: list[dict] = _VOICES_DATA.get('litellm_standard', [])
-
-# Realtime models expose two extra voices on top of the standard nine.
+# OpenAI / Azure OpenAI TTS voices (9 standard + 2 realtime).
+LITELLM_TTS_VOICES: list[dict] = _VOICES_DATA.get('openai_tts', [])
 LITELLM_REALTIME_TTS_VOICES: list[dict] = (
-    LITELLM_TTS_VOICES + _VOICES_DATA.get('litellm_realtime_extra', [])
+    LITELLM_TTS_VOICES + _VOICES_DATA.get('openai_realtime_extra', [])
 )
 
-# Deepgram Aura static catalogue (validated against the live API, but not fetched from it).
+# Google Gemini TTS native voices.  LiteLLM does NOT translate OpenAI voice
+# IDs on the Gemini path — only native Gemini names are accepted.
+GEMINI_TTS_VOICES: list[dict] = _VOICES_DATA.get('gemini_tts', [])
+
+# Classic Google Cloud TTS / Vertex AI (non-Gemini).  LiteLLM maps only 6 of
+# the 9 OpenAI voices on this path; the remaining three (ash, coral, sage)
+# are passed through literally and rejected by the Google API.
+VERTEX_TTS_VOICES: list[dict] = _VOICES_DATA.get('vertex_tts_mapped', [])
+
+# Deepgram Aura static catalogue.
 _DEEPGRAM_AURA_VOICES: list[dict] = _VOICES_DATA.get('deepgram_aura', [])
 
 
@@ -56,15 +62,28 @@ _DEEPGRAM_AURA_VOICES: list[dict] = _VOICES_DATA.get('deepgram_aura', [])
 # LiteLLM helper
 # ---------------------------------------------------------------------------
 
-def _get_litellm_voices_for_model(model: str) -> list[dict]:
-    """Return the fixed LiteLLM voice list appropriate for *model*.
+def _get_openai_voices_for_model(model: str) -> list[dict]:
+    """Return the OpenAI voice list appropriate for *model*.
 
-    Realtime models expose two additional voices; all others use the standard
-    nine OpenAI-compatible voices.
+    Realtime models expose two additional voices on top of the standard nine.
     """
     if 'realtime' in model.lower().replace('_', '-'):
         return LITELLM_REALTIME_TTS_VOICES
     return LITELLM_TTS_VOICES
+
+
+def _get_google_voices_for_model(model: str) -> list[dict]:
+    """Return the correct Google-family voice list based on the model name.
+
+    - Gemini models (name contains 'gemini'): return native Gemini voice IDs.
+      LiteLLM has no mapping table on the Gemini code path; OpenAI names fail.
+    - Classic Vertex AI / Google Cloud TTS: return only the 6 OpenAI voice IDs
+      that LiteLLM actually maps.  The other 3 (ash, coral, sage) are passed
+      through literally and cause a 400 from the Google API.
+    """
+    if 'gemini' in model.lower():
+        return GEMINI_TTS_VOICES
+    return VERTEX_TTS_VOICES
 
 
 # ---------------------------------------------------------------------------
@@ -84,17 +103,29 @@ _TTS_PROVIDER_REGISTRY: list[tuple] = [
     # ------------------------------------------------------------------
     # LiteLLM-managed providers — return fixed voice list, no API call
     # ------------------------------------------------------------------
+
+    # OpenAI (plain or via LiteLLM proxy); Azure OpenAI is caught below
     (
         lambda t: t == 'openai' or ('openai' in t and 'azure' not in t),
-        lambda data, model: _get_litellm_voices_for_model(model),
+        lambda data, model: _get_openai_voices_for_model(model),
     ),
+    # Azure OpenAI — same OpenAI voice IDs, LiteLLM passes them natively
     (
         lambda t: 'azure' in t and ('openai' in t or t in ('azure', 'azureopenai')),
-        lambda data, model: _get_litellm_voices_for_model(model),
+        lambda data, model: _get_openai_voices_for_model(model),
     ),
+    # Google Gemini (Google AI Studio path — model name contains 'gemini')
+    # Dispatch before the generic Vertex entry so it takes precedence.
     (
-        lambda t: t == 'google' or any(k in t for k in ('vertex', 'gcp', 'google')),
-        lambda data, model: _get_litellm_voices_for_model(model),
+        lambda t: t in ('google', 'googleai', 'gemini') or 'gemini' in t,
+        lambda data, model: _get_google_voices_for_model(model),
+    ),
+    # Classic Google Cloud TTS / Vertex AI (non-Gemini)
+    # Fixes dead condition: the previous single entry used `'google' in t`
+    # twice (redundant) and returned the OpenAI-9 list for all Google paths.
+    (
+        lambda t: any(k in t for k in ('vertex', 'gcp', 'google')),
+        lambda data, model: _get_google_voices_for_model(model),
     ),
     # ------------------------------------------------------------------
     # Vendor-specific providers — fetch voices from their APIs

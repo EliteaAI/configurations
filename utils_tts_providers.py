@@ -12,7 +12,6 @@ from pylon.core.tools import log
 # on-premise or private-cloud deployments.
 # ---------------------------------------------------------------------------
 _ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE_URL', 'https://api.elevenlabs.io')
-_DEEPGRAM_API_BASE   = os.environ.get('DEEPGRAM_API_BASE_URL',   'https://api.deepgram.com')
 _PLAYHT_API_BASE     = os.environ.get('PLAYHT_API_BASE_URL',     'https://api.play.ht')
 _IBM_WATSON_TTS_DEFAULT_URL = os.environ.get(
     'IBM_WATSON_TTS_DEFAULT_URL',
@@ -85,25 +84,17 @@ def fetch_voices_from_elevenlabs(data: dict) -> list[dict]:
 
 
 def fetch_voices_from_deepgram(data: dict, static_voices: list[dict]) -> list[dict]:
-    """Validate Deepgram API key and return the static Aura voice list.
+    """Return the static Deepgram Aura voice catalogue.
 
-    Deepgram does not have a dedicated voice-listing endpoint; the Aura voice
-    catalogue is defined in ``data/tts_voices.json``.  We make a lightweight
-    API call only to verify the credentials.
+    Deepgram does not have a dedicated voice-listing endpoint; the catalogue
+    is defined in ``data/tts_voices.json``.  No live API call is made here —
+    consistent with the OpenAI and Azure OpenAI handlers which also return a
+    fixed list without credential validation.
+
+    Connection health (credential validity) should be checked separately via
+    a dedicated check_connection call rather than conflated with voice listing.
     """
-    try:
-        import requests
-
-        response = requests.get(
-            f"{_DEEPGRAM_API_BASE}/v1/projects",
-            headers={"Authorization": f"Token {data.get('api_key', '')}"},
-        )
-        response.raise_for_status()
-
-        return static_voices
-    except Exception as e:
-        log.error("Error fetching Deepgram voices: %s", e)
-        return []
+    return static_voices
 
 
 def fetch_voices_from_playht(data: dict) -> list[dict]:
