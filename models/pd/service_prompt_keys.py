@@ -8,6 +8,7 @@ Admins can configure the prompt *content* in DB, but cannot invent new keys.
 SERVICE_PROMPT_KEYS: tuple[str, ...] = (
     'code_assistant',
     'decision_assistant',
+    'generate_application_draft',
     'llm_system_assistant',
     'llm_task_assistant',
     'mermaid_quick_fix',

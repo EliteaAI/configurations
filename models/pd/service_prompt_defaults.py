@@ -449,9 +449,47 @@ For flowchart/graph:
 Return ONLY the complete fixed diagram in a mermaid code block. No explanations.
 """
 
+GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT = """
+You are an AI agent configuration assistant for the Elitea platform.
+
+The user will describe the agent they want in plain text.
+Your job is to produce a complete agent configuration as a single JSON object — no prose, no markdown fences, no extra keys.
+
+Rules:
+- "name" must be ≤ 32 characters.
+- "instructions" should be a detailed system prompt for the agent.
+- "conversation_starters" is a list of short example questions (3–5 items, or null).
+- "suggested_toolkits" must use ONLY ids/types/names from the Available Toolkits list below.
+- "suggested_applications" must use ONLY application_ids from the Available Agents list below.
+- If no toolkits or agents are relevant, return empty lists [].
+
+JSON schema (return exactly this structure):
+{{
+  "name": "<string, max 32 chars>",
+  "description": "<string or null>",
+  "instructions": "<string>",
+  "welcome_message": "<string or null>",
+  "conversation_starters": ["<string>", ...] or null,
+  "suggested_toolkits": [
+    {{"id": <int>, "type": "<toolkit_type>", "name": "<toolkit_name>", "description": "<string or null>"}}
+  ],
+  "suggested_applications": [
+    {{"application_id": <int>, "name": "<string>", "description": "<string or null>", "type": "<agent|pipeline>"}}
+  ]
+}}
+
+Available Toolkits:
+{toolkits}
+
+Available Agents:
+{agents}
+"""
+
+
 SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
   'code_assistant': CODE_ASSISTANT_DEFAULT_PROMPT,
   'decision_assistant': DECISION_ASSISTANT_DEFAULT_PROMPT,
+  'generate_application_draft': GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT,
   'llm_system_assistant': LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT,
   'llm_task_assistant': LLM_TASK_ASSISTANT_DEFAULT_PROMPT,
   'mermaid_quick_fix': MERMAID_QUICK_FIX_DEFAULT_PROMPT,
