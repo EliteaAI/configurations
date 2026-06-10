@@ -8,8 +8,21 @@ equivalents at inference time.  No provider API call is needed for these.
 All other vendors (ElevenLabs, AWS Polly, Deepgram, PlayHT, IBM Watson, Azure Cognitive
 Services TTS) expose their own voice catalogues and require a live API fetch.
 """
+import os
 from typing import Optional
 from pylon.core.tools import log
+
+# ---------------------------------------------------------------------------
+# External provider API base URLs — override via environment variables for
+# on-premise or private-cloud deployments.
+# ---------------------------------------------------------------------------
+_ELEVENLABS_API_BASE = os.environ.get('ELEVENLABS_API_BASE_URL', 'https://api.elevenlabs.io')
+_DEEPGRAM_API_BASE = os.environ.get('DEEPGRAM_API_BASE_URL', 'https://api.deepgram.com')
+_PLAYHT_API_BASE = os.environ.get('PLAYHT_API_BASE_URL', 'https://api.play.ht')
+_IBM_WATSON_TTS_DEFAULT_URL = os.environ.get(
+    'IBM_WATSON_TTS_DEFAULT_URL',
+    'https://api.us-south.text-to-speech.watson.cloud.ibm.com',
+)
 
 # ---------------------------------------------------------------------------
 # Fixed voice lists for LiteLLM-managed providers
@@ -131,7 +144,7 @@ def fetch_voices_from_elevenlabs(api_key: str) -> list[dict]:
         import requests
         
         response = requests.get(
-            "https://api.elevenlabs.io/v1/voices",
+            f"{_ELEVENLABS_API_BASE}/v1/voices",
             headers={"xi-api-key": api_key}
         )
         response.raise_for_status()
@@ -170,7 +183,7 @@ def fetch_voices_from_deepgram(api_key: str) -> list[dict]:
         
         # Test the API key with a minimal request
         response = requests.get(
-            "https://api.deepgram.com/v1/projects",
+            f"{_DEEPGRAM_API_BASE}/v1/projects",
             headers={"Authorization": f"Token {api_key}"}
         )
         response.raise_for_status()
@@ -205,7 +218,7 @@ def fetch_voices_from_playht(api_key: str, user_id: str) -> list[dict]:
         import requests
         
         response = requests.get(
-            "https://api.play.ht/api/v2/voices",
+            f"{_PLAYHT_API_BASE}/api/v2/voices",
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "X-User-ID": user_id
@@ -349,6 +362,21 @@ def fetch_tts_voices(config_data: dict) -> list[dict]:
     provider.
     """
     # ------------------------------------------------------------------
+    # Resolve vault secret references in config_data (safety net — callers
+    # such as check_connection and configuration_created already call
+    # VaultClient.unsecret() before reaching here, but guard against direct
+    # callers that skip that step).
+    # ------------------------------------------------------------------
+    project_id = config_data.get('project_id')
+    if project_id:
+        try:
+            from .local_tools import VaultClient
+            vc = VaultClient(project_id)
+            config_data = vc.unsecret(config_data)
+        except Exception as _vc_err:
+            log.warning("Could not unsecret TTS config (project_id=%s): %s", project_id, _vc_err)
+
+    # ------------------------------------------------------------------
     # Normalise input: extract 'data' sub-dict and top-level config_type
     # ------------------------------------------------------------------
     if 'data' in config_data and isinstance(config_data['data'], dict):
@@ -441,7 +469,7 @@ def fetch_tts_voices(config_data: dict) -> list[dict]:
         if 'ibm' in t or 'watson' in t:
             return fetch_voices_from_ibm_watson(
                 api_key=data.get('api_key', ''),
-                service_url=data.get('service_url', 'https://api.us-south.text-to-speech.watson.cloud.ibm.com'),
+                service_url=data.get('service_url', _IBM_WATSON_TTS_DEFAULT_URL),
             )
 
         log.warning("Unknown TTS provider type: %s", config_type)
