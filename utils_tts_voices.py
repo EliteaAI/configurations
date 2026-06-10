@@ -200,7 +200,8 @@ def fetch_tts_voices(config_data: dict) -> list[dict]:
             vc = VaultClient(project_id)
             config_data = vc.unsecret(config_data)
         except Exception as _vc_err:
-            log.warning("Could not unsecret TTS config (project_id=%s): %s", project_id, _vc_err)
+            # Log only exception type — _vc_err may reference config data containing secrets
+            log.warning("Could not unsecret TTS config (project_id=%s): [%s]", project_id, type(_vc_err).__name__)
 
     # ------------------------------------------------------------------
     # Normalise input: extract 'data' sub-dict and top-level config_type

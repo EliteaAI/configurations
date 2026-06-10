@@ -50,7 +50,8 @@ class Event:
                             log.warning(f"Could not fetch TTS voices: {result}")
                     except Exception as e:
                         # Don't fail configuration creation if voice fetching fails
-                        log.error(f"Error auto-fetching TTS voices: {e}")
+                        # Log only exception type — never log e directly (may contain credentials)
+                        log.error("Error auto-fetching TTS voices: [%s]", type(e).__name__)
             
             self.update_configuration_rpc(
                 project_id=payload['project_id'],

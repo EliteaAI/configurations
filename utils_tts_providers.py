@@ -54,7 +54,7 @@ def fetch_voices_from_aws_polly(data: dict) -> list[dict]:
         log.warning("boto3 (AWS SDK) not installed")
         return []
     except Exception as e:
-        log.error("Error fetching AWS Polly voices: %s", e)
+        log.error("Error fetching AWS Polly voices: [%s]", type(e).__name__)
         return []
 
 
@@ -79,7 +79,7 @@ def fetch_voices_from_elevenlabs(data: dict) -> list[dict]:
 
         return voices
     except Exception as e:
-        log.error("Error fetching ElevenLabs voices: %s", e)
+        log.error("Error fetching ElevenLabs voices: [%s]", type(e).__name__)
         return []
 
 
@@ -125,7 +125,7 @@ def fetch_voices_from_playht(data: dict) -> list[dict]:
 
         return voices
     except Exception as e:
-        log.error("Error fetching PlayHT voices: %s", e)
+        log.error("Error fetching PlayHT voices: [%s]", type(e).__name__)
         return []
 
 
@@ -156,7 +156,7 @@ def fetch_voices_from_azure_cognitive(data: dict) -> list[dict]:
 
         return voices
     except Exception as e:
-        log.error("Error fetching Azure Cognitive Services voices: %s", e)
+        log.error("Error fetching Azure Cognitive Services voices: [%s]", type(e).__name__)
         return []
 
 
@@ -187,5 +187,5 @@ def fetch_voices_from_ibm_watson(data: dict) -> list[dict]:
 
         return voices
     except Exception as e:
-        log.error("Error fetching IBM Watson voices: %s", e)
+        log.error("Error fetching IBM Watson voices: [%s]", type(e).__name__)
         return []
