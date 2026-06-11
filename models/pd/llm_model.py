@@ -165,6 +165,30 @@ class TTSModel(BaseModel):
         json_schema_extra={'configuration_sections': ['ai_credentials']}
     )
 
+    @staticmethod
+    def check_connection(settings: dict) -> dict | str | None:
+        """
+        Fetch available voices for the TTS configuration.
+
+        Returns:
+            - dict with {'voices': [...]} on success (list may be empty for
+              providers with no enumerable catalogue)
+            - str with a generic error message on failure (detail is logged,
+              not surfaced, to avoid leaking internal error messages to clients)
+            - None if the check is not supported
+        """
+        try:
+            from pylon.core.tools import log as _log
+            from ...utils_tts_voices import fetch_tts_voices
+
+            voices = fetch_tts_voices(settings)
+            return {'voices': voices}
+
+        except Exception as e:
+            from pylon.core.tools import log as _log
+            _log.error("TTS check_connection failed: %s", e)
+            return "Could not connect to TTS provider. Check credentials and configuration."
+
 
 class TTSModelList(BaseModel):
     """Response model for TTS model listings."""
