@@ -188,6 +188,15 @@ class ConfigurationCreate(BaseModel):
         self.elitea_title = key
         return self
 
+    @model_validator(mode='after')
+    def enforce_project_context_title(self):
+        if self.type != 'project_context':
+            return self
+
+        # One record per project — pin elitea_title so it is always deterministic.
+        self.elitea_title = f'project_context_{self.project_id}'
+        return self
+
     @property
     def _entry(self) -> ConfigTypeRegistryItem:
         """
