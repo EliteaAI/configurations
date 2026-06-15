@@ -8,7 +8,7 @@ This is the configurations plugin of a larger Python-based conversational AI pla
 
 The configurations plugin follows a modular microservices architecture:
 
-- `/api/v1/` - REST API endpoints for frontend integration
+- `/api/v2/` - REST API endpoints for frontend integration
 - `/events/` - Event handlers for configuration lifecycle
 - `/models/` - SQLAlchemy database models
 - `/models/pd/` - Pydantic validation models for API requests/responses
@@ -106,7 +106,7 @@ Always include proper error handling with `ConfigurationError` exceptions and lo
 - RPC methods always go in `/rpc/` folders
 - Database models in `/models/` folders  
 - API validation models in `/models/pd/` folders
-- REST endpoints in `/api/v1/` folders
+- REST endpoints in `/api/v2/` folders
 - Utility functions and business logic in root directory files
 - Event handlers in `/events/` folders
 

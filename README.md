@@ -5,7 +5,7 @@ This plugin provides RESTful APIs and RPC functions for managing configuration o
 ## API Endpoints
 
 ### 1. List Configurations
-**GET** `/api/v1/configurations/<int:project_id>`
+**GET** `/api/v2/configurations/<int:project_id>`
 
 Query Parameters:
 - `type` (optional): Filter by configuration type
@@ -39,7 +39,7 @@ Query Parameters:
 ```
 
 ### 2. Create Configuration
-**POST** `/api/v1/configurations/<int:project_id>`
+**POST** `/api/v2/configurations/<int:project_id>`
 
 **Request Body:**
 ```json
@@ -86,7 +86,7 @@ Query Parameters:
 ### List Configurations (Python requests)
 ```python
 import requests
-resp = requests.get('http://localhost:5000/api/v1/configurations/1?type=general')
+resp = requests.get('http://localhost:5000/api/v2/configurations/1?type=general')
 print(resp.json())
 ```
 
@@ -98,7 +98,7 @@ payload = {
     "type": "general",
     "section": "main"
 }
-resp = requests.post('http://localhost:5000/api/v1/configurations/1', json=payload)
+resp = requests.post('http://localhost:5000/api/v2/configurations/1', json=payload)
 print(resp.json())
 ```
 
@@ -111,4 +111,4 @@ print(resp.json())
 - The author is automatically set from the current user context.
 
 ---
-For more details, see the source code in `plugins/configurations/api/v1/configurations.py`.
+For more details, see the source code in `plugins/configurations/api/v2/configurations.py`.
