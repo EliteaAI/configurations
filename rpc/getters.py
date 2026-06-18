@@ -34,7 +34,6 @@ class RPC:
     def configurations_get_filtered_project(self, project_id: int, include_shared: bool = False,
                                             filter_fields: Optional[dict] = None) -> list[dict]:
         """RPC endpoint to get filtered configurations for a project."""
-        log.debug(f'configurations_get_filtered_project, {project_id=} {include_shared=} {filter_fields=}')
         if include_shared:
             return get_all_project_configurations(project_id, filter_fields)
         else:
@@ -43,12 +42,10 @@ class RPC:
     @web.rpc('configurations_get_first_filtered_project')
     def configurations_get_first_filtered_project(self, project_id: int, filter_fields: Optional[dict] = None) -> dict | None:
         """RPC endpoint to get filtered configuration for a project."""
-        log.debug(f'configurations_get_first_filtered_project, {project_id=} {filter_fields=}')
         return get_project_configuration(project_id, filter_fields)
 
     @web.rpc('configurations_get_filtered_public')
     def configurations_get_filtered_public(self, filter_fields: Optional[dict] = None) -> list[dict]:
-        log.debug(f'configurations_get_filtered_public, {filter_fields=}')
         public_project_id = get_public_project_id()
         filter_fields = filter_fields or dict()
         filter_fields['project_id'] = public_project_id
@@ -56,7 +53,7 @@ class RPC:
 
     @web.rpc('configurations_get_configuration_model')
     def configurations_get_configuration_model(self, project_id: int, model_name: str) -> dict:
-        log.debug(f'configurations_get_configuration_model, {project_id=} {model_name=}')
+        log.debug('configurations_get_configuration_model, project_id=%s model_name=%s', project_id, model_name)
 
         with db.get_session(project_id) as session:
             model_filters = [Configuration.data["name"].astext == model_name]
@@ -74,15 +71,11 @@ class RPC:
     def configurations_get_available_models(
             self, project_id: int, section: str = 'llm', include_shared: bool = True
     ) -> dict:
-        log.debug(f'configurations_get_available_models, {project_id=}')
-
         service = ModelConfigurationService(project_id)
         return service.get_available_models(section, include_shared)
 
     @web.rpc('configurations_get_search_options')
     def configurations_get_search_options(self, project_id: int, **kwargs) -> dict:
-        log.debug(f'configurations_get_search_options, {project_id=}')
-
         configurations = get_configurations(
             project_id=project_id,
             type_filter=kwargs.get('type_filter'),
@@ -109,8 +102,6 @@ class RPC:
     def configurations_get_default_models(
             self, project_id: int, section: str = "llm", include_shared: bool = True
     ) -> dict:
-        log.debug(f'configurations_get_default_model, {project_id=}')
-
         service = ModelConfigurationService(project_id)
         response, _ = service.get_models(section, include_shared)
         return {
@@ -122,8 +113,6 @@ class RPC:
     def configurations_get_models(
             self, project_id: int, section: str = "llm", include_shared: bool = True
     ) -> dict:
-        log.debug(f'configurations_get_models, {project_id=}')
-
         service = ModelConfigurationService(project_id)
         response, _ = service.get_models(section, include_shared)
         return response
