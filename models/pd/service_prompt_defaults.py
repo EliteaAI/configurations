@@ -6,16 +6,15 @@ They are stored in DB as `service_prompt` records for the Public project.
 
 from .service_prompt_keys import SERVICE_PROMPT_KEYS
 
-
 LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT = (
-  "Act as an expert prompt engineer to generate optimized System instructions based on the user's workflow requirements.\n"
-  'Reply back with generated text only without any additional questions, reply short (up to 5 sentences) and simple.'
+    "Act as an expert prompt engineer to generate optimized System instructions based on the user's workflow requirements.\n"
+    "Reply back with generated text only without any additional questions, reply short (up to 5 sentences) and simple."
 )
 
 
 LLM_TASK_ASSISTANT_DEFAULT_PROMPT = (
-  "Generate optimized user's input based on the user's requirements.\n"
-  'Reply back with generated text only without any additional questions.'
+    "Generate optimized user's input based on the user's requirements.\n"
+    "Reply back with generated text only without any additional questions."
 )
 
 
@@ -165,17 +164,17 @@ Action: interaction with list variables (messages) variables:
 
 
 PRINTER_ASSISTANT_DEFAULT_PROMPT = (
-  "Act as an expert in message formatting and user communication to craft a clear, professional final message based on the user's request. "
-  'The message should be concise, contextually appropriate, and ready to be presented to the end user.\n\n'
-  'Generate a well-formatted final message using markdown syntax. Output only raw generated text in markdown and with citations if needed.'
+    "Act as an expert in message formatting and user communication to craft a clear, professional final message based on the user's request. "
+    "The message should be concise, contextually appropriate, and ready to be presented to the end user.\n\n"
+    "Generate a well-formatted final message using markdown syntax. Output only raw generated text in markdown and with citations if needed."
 )
 
 
 # NOTE: This key is currently reserved for future use.
 # It must be non-empty due to schema min_length=1.
 DECISION_ASSISTANT_DEFAULT_PROMPT = (
-  "Generate a concise, clear Decision node description based on the user's requirements. "
-  'Reply back with generated text only without any additional questions.'
+    "Generate a concise, clear Decision node description based on the user's requirements. "
+    "Reply back with generated text only without any additional questions."
 )
 
 
@@ -456,20 +455,22 @@ The user will describe the agent they want in plain text.
 Your job is to produce a complete agent configuration as a single JSON object — no prose, no markdown fences, no extra keys.
 
 Rules:
-- "name" must be ≤ 32 characters.
+- "name" is required, 1–32 characters.
+- "description" is required, 1–2304 characters.
 - "instructions" should be a detailed system prompt for the agent.
-- "conversation_starters" is a list of short example questions (3–5 items, or null).
+- "welcome_message" is optional, maximum 768 characters.
+- "conversation_starters" is a list of 1–4 short example questions (each ≤ 768 characters), or null.
 - "suggested_toolkits" must use ONLY ids/types/names from the Available Toolkits list below.
 - "suggested_applications" must use ONLY application_ids from the Available Agents list below.
 - If no toolkits or agents are relevant, return empty lists [].
 
 JSON schema (return exactly this structure):
 {{
-  "name": "<string, max 32 chars>",
-  "description": "<string or null>",
+  "name": "<string, 1–32 chars, required>",
+  "description": "<string, 1–2304 chars, required>",
   "instructions": "<string>",
-  "welcome_message": "<string or null>",
-  "conversation_starters": ["<string>", ...] or null,
+  "welcome_message": "<string, max 768 chars, or null>",
+  "conversation_starters": ["<string, max 768 chars>", ...] (max 4 items) or null,
   "suggested_toolkits": [
     {{"id": <int>, "type": "<toolkit_type>", "name": "<toolkit_name>", "description": "<string or null>"}}
   ],
@@ -487,13 +488,13 @@ Available Agents:
 
 
 SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
-  'code_assistant': CODE_ASSISTANT_DEFAULT_PROMPT,
-  'decision_assistant': DECISION_ASSISTANT_DEFAULT_PROMPT,
-  'generate_application_draft': GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT,
-  'llm_system_assistant': LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT,
-  'llm_task_assistant': LLM_TASK_ASSISTANT_DEFAULT_PROMPT,
-  'mermaid_quick_fix': MERMAID_QUICK_FIX_DEFAULT_PROMPT,
-  'printer_assistant': PRINTER_ASSISTANT_DEFAULT_PROMPT,
-  'router_assistant': ROUTER_ASSISTANT_DEFAULT_PROMPT,
-  'state_modifier_assistant': STATE_MODIFIER_ASSISTANT_DEFAULT_PROMPT,
+    "code_assistant": CODE_ASSISTANT_DEFAULT_PROMPT,
+    "decision_assistant": DECISION_ASSISTANT_DEFAULT_PROMPT,
+    "generate_application_draft": GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT,
+    "llm_system_assistant": LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT,
+    "llm_task_assistant": LLM_TASK_ASSISTANT_DEFAULT_PROMPT,
+    "mermaid_quick_fix": MERMAID_QUICK_FIX_DEFAULT_PROMPT,
+    "printer_assistant": PRINTER_ASSISTANT_DEFAULT_PROMPT,
+    "router_assistant": ROUTER_ASSISTANT_DEFAULT_PROMPT,
+    "state_modifier_assistant": STATE_MODIFIER_ASSISTANT_DEFAULT_PROMPT,
 }
