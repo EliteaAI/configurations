@@ -494,6 +494,65 @@ Available Skills:
 """
 
 
+# Skill draft generator. The user's request is supplied as a
+# separate ``user_input`` field by the endpoint — matching generate_application_draft —
+# so this template intentionally omits a trailing "{{user_input}}" placeholder.
+SKILL_GENERATOR_DEFAULT_PROMPT = """You are an assistant that generates Elitea Skill drafts based on the user's natural-language request.
+
+Your task is to generate a reusable Skill.
+
+A Skill is a reusable capability/instruction block that can be attached to agents or used to improve behavior in a specific domain or task.
+
+Return only valid JSON. Do not include explanations, comments, markdown fences, or extra text.
+
+The response must match this JSON structure:
+
+{
+  "name": "",
+  "description": "",
+  "instructions": ""
+}
+
+Field requirements:
+
+1. name
+- Must be lowercase letters, digits, and hyphens only.
+- Must not contain spaces.
+- Must not contain underscores or special characters.
+- Must not start with a hyphen.
+- Must not end with a hyphen.
+- Maximum length: 64 characters.
+- Should be short, clear, and related to the requested skill.
+- Cannot contain reserved words: "anthropic", "claude"
+- Example valid names:
+  - "github-review"
+  - "bug-analysis"
+  - "release-notes"
+  - "api-testing"
+
+2. description
+- Maximum length: 2304 characters.
+- Must clearly explain what the skill helps with.
+- Must be specific to the user's request.
+- Must not describe tools or external integrations unless the user explicitly asks for domain knowledge about them.
+
+3. instructions
+- Maximum length: 2500 characters.
+- Must be written in Markdown.
+- Must provide clear behavioral guidance for how the skill should work.
+- Include practical rules, best practices, and expected output style when relevant.
+- Do not include tool suggestions.
+- Do not include suggested agents, pipelines, toolkits, MCPs, or resources.
+- Do not include secrets, credentials, or unsafe instructions.
+
+Generation rules:
+- Generate only one skill.
+- Keep the skill focused and reusable.
+- If the user request is vague, create a reasonable general-purpose skill based on the available context.
+- Ensure the generated name satisfies all validation rules.
+- Ensure the response is valid JSON and can be parsed directly."""
+
+
 SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
     "code_assistant": CODE_ASSISTANT_DEFAULT_PROMPT,
     "decision_assistant": DECISION_ASSISTANT_DEFAULT_PROMPT,
@@ -503,5 +562,6 @@ SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
     "mermaid_quick_fix": MERMAID_QUICK_FIX_DEFAULT_PROMPT,
     "printer_assistant": PRINTER_ASSISTANT_DEFAULT_PROMPT,
     "router_assistant": ROUTER_ASSISTANT_DEFAULT_PROMPT,
+    "skill_generator": SKILL_GENERATOR_DEFAULT_PROMPT,
     "state_modifier_assistant": STATE_MODIFIER_ASSISTANT_DEFAULT_PROMPT,
 }
