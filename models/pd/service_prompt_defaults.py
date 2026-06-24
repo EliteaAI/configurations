@@ -462,7 +462,8 @@ Rules:
 - "conversation_starters" is a list of 1–4 short example questions (each ≤ 768 characters), or null.
 - "suggested_toolkits" must use ONLY ids/types/names from the Available Toolkits list below.
 - "suggested_applications" must use ONLY application_ids from the Available Agents list below.
-- If no toolkits or agents are relevant, return empty lists [].
+- "suggested_skills" must use ONLY ids/names from the Available Skills list below. Maximum 5 skills.
+- If no toolkits, agents, or skills are relevant, return empty lists [].
 
 JSON schema (return exactly this structure):
 {{
@@ -476,6 +477,9 @@ JSON schema (return exactly this structure):
   ],
   "suggested_applications": [
     {{"application_id": <int>, "name": "<string>", "description": "<string or null>", "type": "<agent|pipeline>"}}
+  ],
+  "suggested_skills": [
+    {{"id": <int>, "name": "<skill_name>", "description": "<string or null>"}}
   ]
 }}
 
@@ -484,6 +488,9 @@ Available Toolkits:
 
 Available Agents:
 {agents}
+
+Available Skills:
+{skills}
 """
 
 
