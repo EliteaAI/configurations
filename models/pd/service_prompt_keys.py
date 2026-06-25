@@ -13,6 +13,7 @@ SERVICE_PROMPT_KEYS: tuple[str, ...] = (
     'llm_task_assistant',
     'mermaid_quick_fix',
     'printer_assistant',
+    'project_context_generator',
     'router_assistant',
     'skill_generator',
     'state_modifier_assistant',
