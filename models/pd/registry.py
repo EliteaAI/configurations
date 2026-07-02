@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from .environment_settings import EnvironmentSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .project_context import ProjectContext
+from .project_icon import ProjectIcon
 from .service_prompt import ServicePrompt
 from ...local_tools import log
 
@@ -165,4 +166,10 @@ register_config_type(
     type_name='project_context',
     section='project_settings',
     model=ProjectContext,
+)
+
+register_config_type(
+    type_name='project_icon',
+    section='project_settings',
+    model=ProjectIcon,
 )
