@@ -16,6 +16,7 @@ class API(APIBase):
     @register_openapi(
         name="Get Configuration",
         description="Get a single configuration by id.",
+        mcp_description="Use this tool when you already know the config_id of a saved configuration and need its full details for display, editing, or debugging. Do not use this tool to discover what configuration types are supported — use List Available Configuration Types. Do not use to browse all project configurations — use List Configurations. This endpoint is best for 'open this exact configuration record' workflows, especially before update actions or when nested options must be resolved.",
         parameters=[
             {"name": "project_id", "in": "path", "schema": {"type": "integer"},
              "description": "Project identifier."},
@@ -57,6 +58,7 @@ class API(APIBase):
     @register_openapi(
         name="Update Configuration",
         description="Update an existing configuration by id.",
+        mcp_description="Use this tool when you need to edit an existing configuration record, such as changing model properties, updating credentials, toggling shared, or adjusting metadata. Do not use this tool to create a new configuration — use Create Configuration. Do not use to change the default model for a section — use Set Default Model. Treat this as the main 'edit saved configuration instance' tool. It is especially appropriate when the caller already has a config_id and needs validation-aware updates with secret handling.",
         parameters=[
             {"name": "project_id", "in": "path", "schema": {"type": "integer"},
              "description": "Project identifier."},

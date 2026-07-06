@@ -15,6 +15,7 @@ class API(APIBase):
     @register_openapi(
         name="List Configurations",
         description="List project configurations with filtering, pagination, and optional shared entries.",
+        mcp_description="Use this tool when you need to browse, search, or filter stored configurations in a project, optionally including shared/public ones. Do not use this tool when you need the schema of supported configuration types — use List Available Configuration Types. Do not use when you only need distinct type names already used in the project — use List Configuration Types. This is the main configuration inventory endpoint and should be the default choice when an LLM needs to find configuration records before reading or updating a specific one.",
         parameters=[
             {"name": "type", "in": "query", "schema": {"type": "string"},
              "description": "Filter by configuration type. Can be passed multiple times."},
@@ -104,6 +105,7 @@ class API(APIBase):
     @register_openapi(
         name="Create Configuration",
         description="Create a new configuration for the project.",
+        mcp_description="Use this tool when you want to create a new project configuration such as a model definition, credential, service prompt, or project-level setting. Do not use this tool to set the default model for a section — use Set Default Model, which changes Vault defaults rather than creating a record. Do not use when you first need to know what input schema a type expects — call List Available Configuration Types first. This is the primary creation endpoint for configuration records and is best used after schema discovery and optional pre-validation.",
         parameters=[
             {"name": "project_id", "in": "path", "schema": {"type": "integer"},
              "description": "Project identifier."},

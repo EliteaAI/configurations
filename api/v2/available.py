@@ -15,6 +15,7 @@ class API(APIBase):
     @register_openapi(
         name="List Available Configuration Types",
         description="List available configuration types and their schemas.",
+        mcp_description="Use this tool when you need to discover what configuration types exist and what schema each type expects before creating a new configuration. Do not use this tool to list actual saved configurations in a project — use List Configurations for that. Do not use to read one specific saved configuration by ID. This is the 'type catalog / schema discovery' endpoint, best suited for form generation, validation guidance, and LLM tool planning before a create action.",
         parameters=[
             {"name": "section", "in": "query", "schema": {"type": "string"},
              "description": "Filter by section. Can be passed multiple times."},
