@@ -17,6 +17,7 @@ class API(APIBase):
     @register_openapi(
         name="List Models",
         description="List available LLM and embedding models for a project. Returns distinct models by project_id and name.",
+        mcp_tool=True,
         mcp_description="Use this tool when you need a clean catalog of selectable models for a project section such as LLMs or embeddings, especially for dropdowns or model-choice reasoning. Do not use this tool to list generic configurations or credentials — use List Configurations for full configuration records. Do not use to inspect or update a single saved configuration instance. This is the best endpoint when an LLM needs to choose 'which model can I use here?' rather than 'which configuration objects exist?'.",
         parameters=[
             {"name": "include_shared", "in": "query", "schema": {"type": "boolean", "default": False},
@@ -56,6 +57,7 @@ class API(APIBase):
     @register_openapi(
         name="Set Default Model",
         description="Set the default model for a section and target project.",
+        mcp_tool=True,
         mcp_description="Use this tool when you want to change the default model for a section such as llm, embedding, or another supported model section. Do not use this tool to create a new model configuration — use Create Configuration for llm_model, embedding_model, etc. Do not use when you only need to view available models — use List Models. This is the correct tool for 'make this existing model the default' actions and should not be confused with model creation or editing.",
         request_body=SetDefaultModel,
         available_to_users=True,

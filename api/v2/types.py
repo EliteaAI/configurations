@@ -10,6 +10,7 @@ class API(APIBase):
     @register_openapi(
         name="List Configuration Types",
         description="List distinct configuration types for a project, filtered by section.",
+        mcp_tool=True,
         mcp_description="Use this tool when you need a compact list of configuration type names already used in the project, such as github, llm_model, service_prompt, or other registered types. Do not use this tool to retrieve schemas — use List Available Configuration Types. Do not use to browse full configuration records — use List Configurations. This is the most lightweight endpoint in the configurations area and is useful for quick filtering, summaries, or type presence checks.",
         parameters=[
             {"name": "project_id", "in": "path", "schema": {"type": "integer"},
