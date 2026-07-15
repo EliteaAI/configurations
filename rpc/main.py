@@ -5,7 +5,11 @@ from pylon.core.tools import web
 
 from ..local_tools import log
 from ..models.pd.configuration import ConfigurationUpdateRpc
-from ..models.pd.registry import CONFIG_TYPE_REGISTRY, register_config_type
+from ..models.pd.registry import (
+    CONFIG_TYPE_REGISTRY,
+    register_config_type,
+    unregister_config_type,
+)
 from pydantic import BaseModel
 from ..utils import update_configuration, create_if_not_exists, expand_configuration
 
@@ -14,7 +18,8 @@ class RPC:
     @web.rpc('configurations_register')
     def configurations_register(self,
         type_name: str, section: str, model: type[BaseModel] = None, config_schema: Optional[dict] = None,
-        validation_func: Optional[str] = None, check_connection_func: Optional[str] = None
+        validation_func: Optional[str] = None, check_connection_func: Optional[str] = None,
+        replace: bool = False,
     ):
         return register_config_type(
             type_name=type_name,
@@ -22,8 +27,13 @@ class RPC:
             model=model,
             validation_func=validation_func,
             config_schema=config_schema,
-            check_connection_func=check_connection_func
+            check_connection_func=check_connection_func,
+            replace=replace,
         )
+
+    @web.rpc('configurations_unregister')
+    def configurations_unregister(self, type_name: str) -> bool:
+        return unregister_config_type(type_name)
     
     @web.rpc('configurations_create_if_not_exists')
     def create_if_not_exists(self, payload: dict) -> tuple[dict, bool]:
