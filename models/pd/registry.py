@@ -96,13 +96,16 @@ def clear_config_type_registry():
 
 
 def register_config_type(type_name: str, section: str, model=None, validation_func=None, config_schema=None,
-                         check_connection_func=None):
+                         check_connection_func=None, replace=False):
     """
     Register a new configuration type in CONFIG_TYPE_REGISTRY.
     User may provide either a model or a validation_func name (str).
-    Raises ValueError if type_name already exists or neither is provided.
+    Raises ValueError if type_name already exists and replacement was not requested.
+
+    Replacement is transactional: the existing entry remains registered when
+    validation of its successor fails.
     """
-    if type_name in CONFIG_TYPE_REGISTRY:
+    if type_name in CONFIG_TYPE_REGISTRY and not replace:
         raise ValueError(f'Configuration type {type_name} already exists')
     try:
         item = ConfigTypeRegistryItem.model_construct(
@@ -118,6 +121,11 @@ def register_config_type(type_name: str, section: str, model=None, validation_fu
         CONFIG_TYPE_REGISTRY[type_name] = item
     except:
         log.error(format_exc())
+
+
+def unregister_config_type(type_name: str) -> bool:
+    """Remove a dynamic configuration type without touching saved records."""
+    return CONFIG_TYPE_REGISTRY.pop(type_name, None) is not None
 
 
 register_config_type(
