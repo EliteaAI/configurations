@@ -2,10 +2,10 @@ from flask import request
 
 from ...common_utils import get_public_project_id
 from ...exceptions import ConfigurationError
-from ...local_tools import db, APIBase, event_manager, log, auth, config as c, rpc_manager, register_openapi
+from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
-from ...utils import update_configuration, get_options_for_nested_fields
+from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 
 
 class API(APIBase):
@@ -121,14 +121,7 @@ class API(APIBase):
         }
     )
     def delete(self, project_id: int, config_id: int, **kwargs):
-        with db.get_session(project_id) as session:
-            config = session.query(Configuration).filter_by(id=config_id).first()
-            if not config:
-                return {"error": "Configuration not found"}, 404
-            #
-            data = ConfigurationDetails.model_validate(config).model_dump(mode='json')
-            event_manager.fire_event('configuration_deleted', data)
-            #
-            session.delete(config)
-            session.commit()
-            return {"result": "deleted"}, 204
+        result = delete_configuration(project_id, config_id)
+        if result is None:
+            return {"error": "Configuration not found"}, 404
+        return {"result": "deleted"}, 204

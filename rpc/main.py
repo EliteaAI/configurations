@@ -4,14 +4,14 @@ from typing import Optional
 from pylon.core.tools import web
 
 from ..local_tools import log
-from ..models.pd.configuration import ConfigurationDetails, ConfigurationUpdateRpc
+from ..models.pd.configuration import ConfigurationUpdateRpc
 from ..models.pd.registry import (
     CONFIG_TYPE_REGISTRY,
     register_config_type,
     unregister_config_type,
 )
 from pydantic import BaseModel
-from ..utils import update_configuration, create_if_not_exists, expand_configuration
+from ..utils import update_configuration, create_if_not_exists, expand_configuration, delete_configuration
 
 
 class RPC:
@@ -58,16 +58,7 @@ class RPC:
 
     @web.rpc('configurations_delete')
     def configurations_delete(self, project_id: int, config_id: int) -> bool:
-        with db.get_session(project_id) as session:
-            config = session.query(Configuration).filter_by(id=config_id).first()
-            if not config:
-                return False
-            data = ConfigurationDetails.model_validate(config).model_dump(mode='json')
-            if event_manager:
-                event_manager.fire_event('configuration_deleted', data)
-            session.delete(config)
-            session.commit()
-            return True
+        return delete_configuration(project_id, config_id) is not None
 
     @web.rpc('configurations_expand')
     def configurations_expand(
