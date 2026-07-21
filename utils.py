@@ -143,6 +143,23 @@ def create_if_not_exists(payload: dict) -> tuple[dict, bool]:
         raise
 
 
+def delete_configuration(project_id: int, config_id: int):
+    """
+    Delete a configuration by id.
+    Returns the serialized configuration dict on success, or None if not found.
+    The configuration_deleted event fires only after a successful commit.
+    """
+    with db.get_session(project_id) as session:
+        config = session.query(Configuration).filter_by(id=config_id).first()
+        if not config:
+            return None
+        data = ConfigurationDetails.model_validate(config).model_dump(mode='json')
+        session.delete(config)
+        session.commit()
+    event_manager.fire_event('configuration_deleted', data)
+    return data
+
+
 def update_configuration(project_id: int, config_id: int, update_payload: dict) -> dict:
     """
     Update an existing configuration entity in the database.
