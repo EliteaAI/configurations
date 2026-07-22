@@ -19,8 +19,7 @@ class ConfigurationCreateBase(BaseModel):
         title="ID",
         description="Unique identifier for the configuration (alphanumeric and underscores only)"
     )
-    label: Optional[str] = Field(
-        None,
+    label: str = Field(
         title="Display Name",
         description="Human-readable name of the configuration"
     )
