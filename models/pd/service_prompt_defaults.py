@@ -698,10 +698,43 @@ Generation rules:
 - Ensure the response is valid JSON and can be parsed directly."""
 
 
+# Rendered with str.format(current_config=...): {current_config} is the only placeholder,
+# every literal JSON brace below is doubled so format() leaves it intact.
+EDIT_SKILL_DRAFT_DEFAULT_PROMPT = """You are a skill refinement assistant for the Elitea platform. The user wants to MODIFY an existing skill.
+
+Current Skill Configuration:
+{current_config}
+
+Apply the user's request and produce the COMPLETE updated skill as a single JSON object
+with exactly these keys:
+{{
+  "name": "<already-slugified: lowercase letters, digits and hyphens only; no spaces or underscores; no leading or trailing hyphen; 1-64 chars; no 'claude' or 'anthropic'. Examples: github-review, bug-analysis, api-testing>",
+  "description": "<concise description, max 2304 chars>",
+  "instructions": "<Markdown instructions, max 5000 chars>"
+}}
+
+Rules:
+- The "name" MUST be slugified (lowercase letters/digits/hyphens only, 1-64 chars).
+- If the user asks to improve/refine/rework the skill in general, or gives a brief or vague
+  request (e.g. "do something useful", "make it better", "improve it"), treat it as a
+  request to IMPROVE ALL THREE fields: rewrite the name, description AND instructions so the
+  skill becomes genuinely useful, clear and thorough. In this case NEVER return the current
+  values unchanged — always propose a meaningfully improved name, description and
+  instructions.
+- Only when the user explicitly names specific fields to change (e.g. "only the
+  instructions", "just the name") should you modify ONLY those fields and copy the other
+  fields' current values verbatim.
+- Always build on the current configuration above; keep the skill's original intent when it
+  is clear, and infer a sensible, useful purpose when the current skill is a placeholder.
+- Return ONLY the JSON object — no prose, no code fences, no extra keys (no suggested
+  toolkits, agents, pipelines, MCPs, or skills of any kind)."""
+
+
 SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
     "code_assistant": CODE_ASSISTANT_DEFAULT_PROMPT,
     "decision_assistant": DECISION_ASSISTANT_DEFAULT_PROMPT,
     "edit_application_draft": EDIT_APPLICATION_DRAFT_DEFAULT_PROMPT,
+    "edit_skill_draft": EDIT_SKILL_DRAFT_DEFAULT_PROMPT,
     "generate_application_draft": GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT,
     "llm_system_assistant": LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT,
     "llm_task_assistant": LLM_TASK_ASSISTANT_DEFAULT_PROMPT,

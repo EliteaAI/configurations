@@ -9,6 +9,7 @@ SERVICE_PROMPT_KEYS: tuple[str, ...] = (
     'code_assistant',
     'decision_assistant',
     'edit_application_draft',
+    'edit_skill_draft',
     'generate_application_draft',
     'llm_system_assistant',
     'llm_task_assistant',
