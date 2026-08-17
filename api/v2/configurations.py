@@ -38,6 +38,10 @@ class API(APIBase):
              "description": "Sort order (asc or desc)."},
             {"name": "query", "in": "query", "schema": {"type": "string"},
              "description": "Search string for configuration label."},
+            {"name": "folder_id", "in": "query", "schema": {"type": "integer"},
+             "description": "Filter by folder ID."},
+            {"name": "unfoldered_only", "in": "query", "schema": {"type": "boolean", "default": False},
+             "description": "Return only configurations not in any folder."},
         ],
         available_to_users=True,
     )
@@ -86,6 +90,8 @@ class API(APIBase):
         sort_order = request.args.get("sort_order", default='desc')
 
         query = request.args.get('query')
+        folder_id = request.args.get('folder_id', type=int)
+        unfoldered_only = request.args.get('unfoldered_only', default="false").lower() == "true"
 
         response = get_configurations(
             project_id=project_id,
@@ -98,7 +104,9 @@ class API(APIBase):
             shared_limit=shared_limit,
             query=query,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            folder_id=folder_id,
+            unfoldered_only=unfoldered_only,
         )
 
         return response, 200

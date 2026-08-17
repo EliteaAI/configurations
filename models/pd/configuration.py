@@ -258,6 +258,7 @@ class ConfigurationDetails(BaseModel):
     created_at: datetime
     updated_at: Optional[datetime]
     is_pinned: bool = False
+    folder_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 

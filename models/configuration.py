@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 import uuid
 
-from sqlalchemy import Integer, String, Boolean, Text, DateTime, func, UUID
+from sqlalchemy import Integer, String, Boolean, Text, DateTime, func, UUID, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -37,3 +37,7 @@ class Configuration(db.Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, onupdate=func.now())
+
+    folder_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey(f"{config.POSTGRES_TENANT_SCHEMA}.entity_folders.id", ondelete="SET NULL"), nullable=True, index=True
+    )

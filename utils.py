@@ -629,7 +629,9 @@ def get_configurations(
     shared_limit: int = 20,
     query: str = None,
     sort_by: str = "created_at",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
+    folder_id: int = None,
+    unfoldered_only: bool = False,
 ):
     from .local_tools import rpc_manager
 
@@ -648,6 +650,12 @@ def get_configurations(
 
         # Build and execute project configurations query
         project_query = session.query(Configuration).filter(Configuration.project_id == project_id)
+
+        # Folder filter
+        if folder_id is not None:
+            project_query = project_query.filter(Configuration.folder_id == folder_id)
+        elif unfoldered_only:
+            project_query = project_query.filter(Configuration.folder_id.is_(None))
 
         if type_filter:
             project_query = project_query.filter(Configuration.type.in_(type_filter))
