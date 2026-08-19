@@ -44,6 +44,28 @@ class RPC:
         """RPC endpoint to get filtered configuration for a project."""
         return get_project_configuration(project_id, filter_fields)
 
+    @web.rpc('configurations_get_by_id', 'get_configuration_by_id')
+    def configurations_get_by_id(self, project_id: int, configuration_id: int) -> dict | None:
+        """RPC endpoint to get a single configuration by ID.
+
+        Args:
+            project_id: The project ID
+            configuration_id: The configuration ID
+
+        Returns:
+            Configuration dict with id, name, type, etc. or None if not found
+        """
+        with db.get_session(project_id) as session:
+            config = session.query(Configuration).filter_by(id=configuration_id).first()
+            if config:
+                return {
+                    'id': config.id,
+                    'name': config.name,
+                    'type': config.type,
+                    'section': config.section,
+                }
+        return None
+
     @web.rpc('configurations_get_filtered_public')
     def configurations_get_filtered_public(self, filter_fields: Optional[dict] = None) -> list[dict]:
         public_project_id = get_public_project_id()
