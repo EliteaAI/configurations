@@ -595,9 +595,9 @@ Return ONLY the JSON object. Do not wrap in markdown fences.
 """
 
 
-# Eval-dimension draft generator. Instructions/application_name/count_hint are substituted by
-# build_eval_dimensions_system_prompt (elitea_core/utils/generate_application_utils.py) — the
-# endpoint supplies the agent's instructions as a separate ``user_input`` field too, matching
+# Eval-dimension draft generator. Instructions/application_name/count_clause/existing_dimensions are
+# substituted by build_eval_dimensions_system_prompt (elitea_core/utils/generate_application_utils.py)
+# — the endpoint supplies the agent's instructions as a separate ``user_input`` field too, matching
 # generate_application_draft's convention.
 GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT = """
 You are an evaluation design assistant for the Elitea platform.
@@ -620,9 +620,10 @@ validating LLM agents, drawing only on dimensions relevant to this agent, for ex
 - Groundedness / hallucination avoidance: does the response stick to facts it can support, if the
   agent's role involves factual claims?
 
+{existing_dimensions}
+
 Propose only dimensions that make sense for THIS agent given its instructions above — do not invent
-requirements the instructions don't mention, and do not propose more than {count_hint} dimensions if a
-count is given (otherwise use your judgment, typically 3-6).
+requirements the instructions don't mention. {count_clause}
 
 Return ONLY a single JSON object — no prose, no markdown fences, no extra keys — matching exactly this
 schema:
