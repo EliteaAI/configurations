@@ -38,6 +38,8 @@ class API(APIBase):
              "description": "Sort order (asc or desc)."},
             {"name": "query", "in": "query", "schema": {"type": "string"},
              "description": "Search string for configuration label."},
+            {"name": "ids", "in": "query", "schema": {"type": "string"},
+             "description": "Comma-separated list of configuration IDs to filter by (max 100). Used for folder contents."},
         ],
         available_to_users=True,
     )
@@ -86,6 +88,7 @@ class API(APIBase):
         sort_order = request.args.get("sort_order", default='desc')
 
         query = request.args.get('query')
+        ids_param = request.args.get('ids')
 
         response = get_configurations(
             project_id=project_id,
@@ -98,7 +101,8 @@ class API(APIBase):
             shared_limit=shared_limit,
             query=query,
             sort_by=sort_by,
-            sort_order=sort_order
+            sort_order=sort_order,
+            ids=ids_param,
         )
 
         return response, 200

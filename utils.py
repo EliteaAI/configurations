@@ -629,7 +629,8 @@ def get_configurations(
     shared_limit: int = 20,
     query: str = None,
     sort_by: str = "created_at",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
+    ids: str = None,
 ):
     from .local_tools import rpc_manager
 
@@ -648,6 +649,14 @@ def get_configurations(
 
         # Build and execute project configurations query
         project_query = session.query(Configuration).filter(Configuration.project_id == project_id)
+
+        # Filter by specific IDs (used for folder contents)
+        if ids:
+            if isinstance(ids, str):
+                ids = [int(id.strip()) for id in ids.split(',') if id.strip().isdigit()]
+            ids = ids[:100]
+            if ids:
+                project_query = project_query.filter(Configuration.id.in_(ids))
 
         if type_filter:
             project_query = project_query.filter(Configuration.type.in_(type_filter))
