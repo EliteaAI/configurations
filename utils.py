@@ -14,6 +14,24 @@ from .models.pd.registry import CONFIG_TYPE_REGISTRY
 from .exceptions import ConfigurationError, handle_validation_error
 
 
+def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
+    """
+    Parse and validate an IDs filter parameter.
+
+    Args:
+        ids: Comma-separated string or list of IDs
+        max_ids: Maximum number of IDs allowed (default 100)
+
+    Returns:
+        List of integer IDs, capped at max_ids
+    """
+    if not ids:
+        return []
+    if isinstance(ids, str):
+        ids = [int(id_str.strip()) for id_str in ids.split(',') if id_str.strip().isdigit()]
+    return ids[:max_ids]
+
+
 def _process_secret_fields(data: dict, data_properties: dict, config_type: str) -> None:
     """
     Process data fields to identify and convert secret/password fields to SecretStr.
@@ -629,7 +647,8 @@ def get_configurations(
     shared_limit: int = 20,
     query: str = None,
     sort_by: str = "created_at",
-    sort_order: str = "desc"
+    sort_order: str = "desc",
+    ids: str = None,
 ):
     from .local_tools import rpc_manager
 
@@ -648,6 +667,13 @@ def get_configurations(
 
         # Build and execute project configurations query
         project_query = session.query(Configuration).filter(Configuration.project_id == project_id)
+
+        # Filter by specific IDs (used for folder contents)
+        parsed_ids = parse_ids_filter(ids)
+        if parsed_ids:
+            project_query = project_query.filter(Configuration.id.in_(parsed_ids))
+            # Auto-adjust limit to match requested IDs count
+            limit = max(limit, len(parsed_ids))
 
         if type_filter:
             project_query = project_query.filter(Configuration.type.in_(type_filter))
@@ -746,6 +772,11 @@ def get_configurations(
                 Configuration.project_id == public_project_id,
                 Configuration.shared == True
             )
+            # Filter by specific IDs (used for folder contents)
+            if parsed_ids:
+                shared_query = shared_query.where(Configuration.id.in_(parsed_ids))
+                # Auto-adjust shared_limit to match requested IDs count
+                shared_limit = max(shared_limit, len(parsed_ids))
             if type_filter:
                 shared_query = shared_query.where(Configuration.type.in_(type_filter))
             if section_filter:
