@@ -1,6 +1,8 @@
+from queue import Empty
+
 from flask import request
 
-from tools import api_tools
+from tools import api_tools, rpc_tools
 from ...local_tools import APIBase, current_user, log, auth, config as c, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
 from ...utils import create_configuration, get_configurations
@@ -104,6 +106,28 @@ class API(APIBase):
             sort_order=sort_order,
             ids=ids_param,
         )
+
+        # Enrich with folder info (bulk query) - non-blocking
+        try:
+            items = response.get('items', [])
+            config_ids = [item['id'] for item in items if item.get('id')]
+            if config_ids:
+                user_id = current_user().get("id")
+                folder_map = rpc_tools.RpcMixin().rpc.timeout(3).social_get_entities_folder_info_bulk(
+                    entity_type='configuration',
+                    project_id=project_id,
+                    entity_ids=config_ids,
+                    user_id=user_id
+                )
+                for item in items:
+                    folder_info = folder_map.get(item['id'])
+                    if folder_info:
+                        item['folder_id'] = folder_info.get('folder_id')
+                        item['folder_name'] = folder_info.get('folder_name')
+        except Empty:
+            log.debug("Folder info RPC not available, skipping folder enrichment")
+        except Exception as folder_err:
+            log.warning(f"Failed to enrich configurations with folder info: {folder_err}")
 
         return response, 200
 
