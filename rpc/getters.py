@@ -60,7 +60,7 @@ class RPC:
             if config:
                 return {
                     'id': config.id,
-                    'name': config.name,
+                    'name': config.label or config.elitea_title,
                     'type': config.type,
                     'section': config.section,
                 }
