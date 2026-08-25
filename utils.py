@@ -772,6 +772,11 @@ def get_configurations(
                 Configuration.project_id == public_project_id,
                 Configuration.shared == True
             )
+            # Filter by specific IDs (used for folder contents)
+            if parsed_ids:
+                shared_query = shared_query.where(Configuration.id.in_(parsed_ids))
+                # Auto-adjust shared_limit to match requested IDs count
+                shared_limit = max(shared_limit, len(parsed_ids))
             if type_filter:
                 shared_query = shared_query.where(Configuration.type.in_(type_filter))
             if section_filter:
