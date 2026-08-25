@@ -12,6 +12,7 @@ SERVICE_PROMPT_KEYS: tuple[str, ...] = (
     'edit_project_context_draft',
     'edit_skill_draft',
     'generate_application_draft',
+    'generate_eval_dimensions',
     'llm_system_assistant',
     'llm_task_assistant',
     'mermaid_quick_fix',
