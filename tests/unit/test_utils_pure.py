@@ -126,19 +126,40 @@ class TestProcessSecretFields:
     def _process_secret_fields(data: dict, data_properties: dict, config_type: str):
         """Pure function copied from utils.py."""
         from pydantic import SecretStr
+
+        def is_password_schema(schema):
+            if schema.get('format') == 'password':
+                return True
+            return any(
+                option.get('format') == 'password'
+                for option in schema.get('anyOf', [])
+                if isinstance(option, dict)
+            )
+
+        def process_secret_value(value, schema):
+            if is_password_schema(schema):
+                if value and not (
+                    isinstance(value, str)
+                    and value.startswith('{{secret.')
+                    and value.endswith('}}')
+                ):
+                    return value if isinstance(value, SecretStr) else SecretStr(value)
+                return value
+
+            if isinstance(value, dict):
+                properties = schema.get('properties', {})
+                additional_properties = schema.get('additionalProperties')
+                for nested_key, nested_value in list(value.items()):
+                    nested_schema = properties.get(nested_key)
+                    if nested_schema is None and isinstance(additional_properties, dict):
+                        nested_schema = additional_properties
+                    if isinstance(nested_schema, dict):
+                        value[nested_key] = process_secret_value(nested_value, nested_schema)
+            return value
+
         for key, value in list(data.items()):
             if key in data_properties:
-                key_properties = data_properties[key]
-                is_password = False
-                if key_properties.get('format') == 'password':
-                    is_password = True
-                elif 'anyOf' in key_properties:
-                    for schema_option in key_properties['anyOf']:
-                        if schema_option.get('format') == 'password':
-                            is_password = True
-                            break
-                if is_password and value and not (isinstance(value, str) and value.startswith('{{secret.') and value.endswith('}}')):
-                    data[key] = SecretStr(value)
+                data[key] = process_secret_value(value, data_properties[key])
             else:
                 raise TestProcessSecretFields.ConfigurationError(key, f"Property '{key}' is not valid for configuration type '{config_type}'")
 
@@ -195,3 +216,70 @@ class TestProcessSecretFields:
 
         assert data["name"] == "my-name"
         assert data["count"] == 42
+
+    def test_converts_secret_values_in_string_map(self):
+        from pydantic import SecretStr
+
+        data = {
+            "headers": {
+                "x-api-key": "gateway-key",
+                "x-tenant": "tenant-a",
+            }
+        }
+        data_properties = {
+            "headers": {
+                "type": "object",
+                "additionalProperties": {"type": "string", "format": "password"},
+            }
+        }
+
+        self._process_secret_fields(data, data_properties, "openapi")
+
+        assert isinstance(data["headers"]["x-api-key"], SecretStr)
+        assert data["headers"]["x-api-key"].get_secret_value() == "gateway-key"
+        assert isinstance(data["headers"]["x-tenant"], SecretStr)
+
+    def test_keeps_secret_references_in_string_map(self):
+        data = {"headers": {"x-api-key": "{{secret.gateway_key}}"}}
+        data_properties = {
+            "headers": {
+                "type": "object",
+                "additionalProperties": {"type": "string", "format": "password"},
+            }
+        }
+
+        self._process_secret_fields(data, data_properties, "openapi")
+
+        assert data["headers"]["x-api-key"] == "{{secret.gateway_key}}"
+
+
+class TestSerializeSecretDictValues:
+    @staticmethod
+    def _serialize_secret_dict_values(value):
+        from pydantic import SecretStr
+
+        if isinstance(value, SecretStr):
+            return value.get_secret_value()
+        if isinstance(value, dict):
+            return {
+                key: TestSerializeSecretDictValues._serialize_secret_dict_values(item)
+                for key, item in value.items()
+            }
+        return value
+
+    def test_serializes_nested_secret_references_for_json_storage(self):
+        from pydantic import SecretStr
+
+        data = {
+            "headers": {
+                "x-api-key": SecretStr("{{secret.gateway_key}}"),
+                "x-tenant": SecretStr("{{secret.tenant}}"),
+            }
+        }
+
+        assert self._serialize_secret_dict_values(data) == {
+            "headers": {
+                "x-api-key": "{{secret.gateway_key}}",
+                "x-tenant": "{{secret.tenant}}",
+            }
+        }
