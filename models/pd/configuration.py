@@ -13,6 +13,14 @@ from ...exceptions import ConfigurationError
 from ...local_tools import rpc_manager, log
 
 
+def _serialize_secret_dict_values(value):
+    if isinstance(value, SecretStr):
+        return value.get_secret_value()
+    if isinstance(value, dict):
+        return {key: _serialize_secret_dict_values(item) for key, item in value.items()}
+    return value
+
+
 class ConfigurationCreateBase(BaseModel):
     """Model for creating a new configuration via API."""
     elitea_title: str = Field(
@@ -76,11 +84,9 @@ class ConfigurationCreateBase(BaseModel):
 class ConfigurationCreate(BaseModel):
     @field_serializer('data')
     def convert_secret_strings(self, v: dict, info: SerializationInfo):
-        context = info.context
+        context = info.context or {}
         if context.get('unsecret'):
-            for k in v.keys():
-                if isinstance(v[k], SecretStr):
-                    v[k] = v[k].get_secret_value()
+            return _serialize_secret_dict_values(v)
         return v
 
     project_id: int

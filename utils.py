@@ -32,6 +32,39 @@ def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
     return ids[:max_ids]
 
 
+def _is_password_schema(schema: dict) -> bool:
+    if schema.get('format') == 'password':
+        return True
+    return any(
+        option.get('format') == 'password'
+        for option in schema.get('anyOf', [])
+        if isinstance(option, dict)
+    )
+
+
+def _process_secret_value(value, schema: dict):
+    if _is_password_schema(schema):
+        if value and not (
+            isinstance(value, str)
+            and value.startswith('{{secret.')
+            and value.endswith('}}')
+        ):
+            return value if isinstance(value, SecretStr) else SecretStr(value)
+        return value
+
+    if isinstance(value, dict):
+        properties = schema.get('properties', {})
+        additional_properties = schema.get('additionalProperties')
+        for nested_key, nested_value in list(value.items()):
+            nested_schema = properties.get(nested_key)
+            if nested_schema is None and isinstance(additional_properties, dict):
+                nested_schema = additional_properties
+            if isinstance(nested_schema, dict):
+                value[nested_key] = _process_secret_value(nested_value, nested_schema)
+
+    return value
+
+
 def _process_secret_fields(data: dict, data_properties: dict, config_type: str) -> None:
     """
     Process data fields to identify and convert secret/password fields to SecretStr.
@@ -49,21 +82,7 @@ def _process_secret_fields(data: dict, data_properties: dict, config_type: str) 
     """
     for key, value in list(data.items()):
         if key in data_properties:
-            key_properties = data_properties[key]
-            is_password = False
-
-            # Check if field is marked as password/secret
-            if key_properties.get('format') == 'password':
-                is_password = True
-            elif 'anyOf' in key_properties:
-                for schema_option in key_properties['anyOf']:
-                    if schema_option.get('format') == 'password':
-                        is_password = True
-                        break
-
-            # Convert to SecretStr if it's a password field and not already a secret reference
-            if is_password and value and not (isinstance(value, str) and value.startswith('{{secret.') and value.endswith('}}')):
-                data[key] = SecretStr(value)
+            data[key] = _process_secret_value(value, data_properties[key])
         else:
             raise ConfigurationError(key, f"Property '{key}' is not valid for configuration type '{config_type}'")
 
