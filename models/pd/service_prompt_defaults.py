@@ -741,12 +741,19 @@ Return only valid JSON. Do not include explanations, comments, markdown fences, 
 The response must match this JSON structure:
 
 {
+  "activation_description": "",
   "project_background": ""
 }
 
 Field requirements:
 
-1. project_background
+1. activation_description
+- Maximum length: 300 characters.
+- Must concisely describe which user requests should load this Project Context.
+- Must classify intent without repeating or revealing the full Project Background.
+- Should use concrete verbs and topics from the user's request.
+
+2. project_background
 - Must be written in Markdown.
 - Maximum length: 2500 characters.
 - Must be clear, structured, and useful as reusable project context.
@@ -768,7 +775,7 @@ Recommended Markdown structure when relevant:
 - Terminology
 
 Generation rules:
-- Generate only Project Background content.
+- Generate both the activation description and Project Background.
 - Keep it concise and useful.
 - If the user request is vague, create a reasonable general-purpose project context based on the available information.
 - Ensure the response is valid JSON and can be parsed directly."""
@@ -783,13 +790,16 @@ Project Background is used by EliteA to provide better, more accurate, and proje
 Current Project Context:
 {current_config}
 
-Apply the user's request and produce the COMPLETE updated Project Background as a single JSON object
-with exactly this key:
+Apply the user's request and produce the COMPLETE updated Project Context as a single JSON object
+with exactly these keys:
 {{
+  "activation_description": "<when user requests should load this context, max 300 characters>",
   "project_background": "<the full updated Project Background in Markdown, max 2500 characters>"
 }}
 
 Rules:
+- Return the ENTIRE updated activation description and Project Background.
+- The activation description must concisely classify relevant user intent without repeating the full background.
 - Return the ENTIRE updated Project Background, not just the changed part.
 - If the user asks to improve/refine/rework the context in general, or gives a brief or vague
   request (e.g. "make it better", "improve it", "do something useful"), rewrite the whole
