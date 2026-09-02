@@ -714,7 +714,7 @@ Field requirements:
 - Must not describe tools or external integrations unless the user explicitly asks for domain knowledge about them.
 
 3. instructions
-- Maximum length: 2500 characters.
+- Maximum length: 5000 characters.
 - Must be written in Markdown.
 - Must provide clear behavioral guidance for how the skill should work.
 - Include practical rules, best practices, and expected output style when relevant.
