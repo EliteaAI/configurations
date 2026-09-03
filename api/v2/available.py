@@ -5,8 +5,9 @@ from flask import request
 from ...local_tools import APIBase, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
-#
-#
+from ...tracing_access import current_actor_id, hidden_tracing_types
+
+
 class API(APIBase):
     url_params = [
         '',
@@ -20,6 +21,8 @@ class API(APIBase):
         parameters=[
             {"name": "section", "in": "query", "schema": {"type": "string"},
              "description": "Filter by section. Can be passed multiple times."},
+            {"name": "project_id", "in": "query", "schema": {"type": "integer"},
+             "description": "Project to evaluate type visibility against. Omitting it returns the full catalog."},
         ],
         available_to_users=True,
     )
@@ -28,9 +31,15 @@ class API(APIBase):
         section_filter = request.args.getlist("section")
         base_config_schema = ConfigurationCreateBase.model_json_schema()
 
+        # Cosmetic only; the create handler is the actual control
+        project_id = kwargs.get('project_id') or request.args.get('project_id', type=int)
+        hidden_types = hidden_tracing_types(project_id, current_actor_id()) if project_id else set()
+
         for entry in CONFIG_TYPE_REGISTRY.values():
             has_test_connection = bool(entry.check_connection_func) or hasattr(entry.model, "check_connection")
             if section_filter and entry.section not in section_filter:
+                continue
+            if entry.type in hidden_types:
                 continue
 
             config_schema = deepcopy(base_config_schema)
