@@ -6,6 +6,7 @@ from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, reg
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
+from ...folder_access import require_folder_access
 
 
 class API(APIBase):
@@ -35,6 +36,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id')
     def get(self, project_id: int, config_id: int, **kwargs):
         public_project_id = get_public_project_id()
 
@@ -79,6 +81,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id', write=True)
     def put(self, project_id: int, config_id: int, **kwargs):
         try:
             parsed = ConfigurationUpdate.model_validate(request.json)
@@ -120,6 +123,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id', write=True)
     def delete(self, project_id: int, config_id: int, **kwargs):
         result = delete_configuration(project_id, config_id)
         if result is None:

@@ -1,4 +1,5 @@
 from .common_utils import get_public_project_id
+from .folder_access import folder_exclusion_clause
 from .local_tools import db, VaultClient
 from .models.configuration import Configuration
 from .models.pd.llm_model import LlmModelList, EmbeddingModelList, VectorStorageModelList, ImageGenerationModelList, ASRModelList, TTSModelList
@@ -26,7 +27,8 @@ class ConfigurationModelHandler:
 
     def get_private_filters(self):
         """Override in subclasses if special filters are needed"""
-        return []
+        clause = folder_exclusion_clause(self.project_id, Configuration.id)
+        return [] if clause is None else [clause]
 
     def get_public_filters(self):
         """Override in subclasses if special filters are needed"""
