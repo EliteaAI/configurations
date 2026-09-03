@@ -5,7 +5,25 @@ from ...exceptions import ConfigurationError
 from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
+from ...tracing_access import can_manage_tracing, is_tracing_type
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
+
+TRACING_DENIED = {"error": "Tracing configurations are managed by project admins"}
+
+
+def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
+    if not is_tracing_type(config_type):
+        return False
+    return not can_manage_tracing(project_id, auth.current_user().get('id'))
+
+
+def read_configuration_type(project_id: int, config_id: int) -> str | None:
+    # Project-scoped because this feeds an authorization decision made against the
+    # project in the URL, and ids are unique per table rather than per project
+    with db.get_session(project_id) as session:
+        return session.query(Configuration.type).filter_by(
+            id=config_id, project_id=project_id
+        ).scalar()
 
 
 class API(APIBase):
@@ -41,6 +59,12 @@ class API(APIBase):
         with db.get_session(project_id) as session:
             config = session.query(Configuration).filter_by(id=config_id).first()
             if not config:
+                return {"error": "Configuration not found"}, 404
+
+            # 404 rather than 403 so the credential's existence stays concealed. Gating is
+            # safe here but not on the list endpoint, which the agent runtime reads as the
+            # invoking user; nothing machine-facing fetches a configuration by id.
+            if deny_tracing_access(project_id, config.type):
                 return {"error": "Configuration not found"}, 404
 
             is_pinned = rpc_manager.timeout(2).social_is_pinned(
@@ -80,6 +104,9 @@ class API(APIBase):
         }
     )
     def put(self, project_id: int, config_id: int, **kwargs):
+        # The stored type is authoritative - ConfigurationUpdate cannot carry one
+        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
+            return TRACING_DENIED, 403
         try:
             parsed = ConfigurationUpdate.model_validate(request.json)
         except Exception as e:
@@ -121,6 +148,9 @@ class API(APIBase):
         }
     )
     def delete(self, project_id: int, config_id: int, **kwargs):
+        # Gated too: deleting the admin's credential silently stops project tracing
+        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
+            return TRACING_DENIED, 403
         result = delete_configuration(project_id, config_id)
         if result is None:
             return {"error": "Configuration not found"}, 404

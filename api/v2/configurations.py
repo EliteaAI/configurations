@@ -5,6 +5,7 @@ from flask import request
 from tools import api_tools, rpc_tools
 from ...local_tools import APIBase, current_user, log, auth, config as c, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
+from ...tracing_access import can_manage_tracing, is_tracing_type
 from ...utils import create_configuration, get_configurations
 from ...exceptions import ConfigurationError
 
@@ -158,6 +159,14 @@ class API(APIBase):
         data = dict(request.json)
         data['project_id'] = project_id
         data['author_id'] = current_user().get('id')
+
+        # Checked here rather than in the decorator: the type is only known from the body.
+        # MCP re-enters this handler with the caller's identity, so this covers that surface too.
+        if is_tracing_type(data.get('type')) and not can_manage_tracing(project_id, data['author_id']):
+            log.warning(
+                f"Blocked tracing configuration create by user {data['author_id']} in project {project_id}"
+            )
+            return {"error": "Tracing configurations are managed by project admins", "field": "type"}, 403
 
         try:
             return create_configuration(data), 200
