@@ -7,6 +7,7 @@ from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
 from ...tracing_access import can_manage_tracing, is_tracing_type
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
+from ...folder_access import require_folder_access
 
 TRACING_DENIED = {"error": "Tracing configurations are managed by project admins"}
 
@@ -53,6 +54,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id')
     def get(self, project_id: int, config_id: int, **kwargs):
         public_project_id = get_public_project_id()
 
@@ -103,6 +105,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id', write=True)
     def put(self, project_id: int, config_id: int, **kwargs):
         # The stored type is authoritative - ConfigurationUpdate cannot carry one
         if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
@@ -147,6 +150,7 @@ class API(APIBase):
             },
         }
     )
+    @require_folder_access('config_id', write=True)
     def delete(self, project_id: int, config_id: int, **kwargs):
         # Gated too: deleting the admin's credential silently stops project tracing
         if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):

@@ -12,6 +12,7 @@ from .models.pd.configuration import (
 )
 from .models.pd.registry import CONFIG_TYPE_REGISTRY
 from .exceptions import ConfigurationError, handle_validation_error
+from .folder_access import folder_exclusion_clause
 
 
 def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
@@ -700,6 +701,12 @@ def get_configurations(
             project_query = project_query.filter(Configuration.section.in_(section_filter))
         if query:
             project_query = project_query.filter(Configuration.label.ilike(f"%{query}%"))
+
+        # Folder-level permissions (#6524): applied before count/pagination so the
+        # total and the page slice both exclude no-access folders.
+        folder_filter = folder_exclusion_clause(project_id, Configuration.id)
+        if folder_filter is not None:
+            project_query = project_query.filter(folder_filter)
 
         # Add pin status (project-wide) if available
         if add_pins_with_priority:
