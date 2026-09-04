@@ -71,6 +71,12 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "danger_sanitize_secrets_with_value", danger_sanitize_secrets
             )
+            migrate_eval_dim_prompt = self._wrap_admin_task(
+                Method, "migrate_service_prompt_generate_eval_dimensions", self
+            )
+            this.for_module("admin").module.register_admin_task(
+                "migrate_service_prompt_generate_eval_dimensions", migrate_eval_dim_prompt
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -81,6 +87,10 @@ class Module(module.ModuleModel):
             )
             this.for_module("admin").module.unregister_admin_task(
                 "danger_sanitize_secrets_with_value", self.danger_sanitize_secrets_with_value
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "migrate_service_prompt_generate_eval_dimensions",
+                self.migrate_service_prompt_generate_eval_dimensions,
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)
