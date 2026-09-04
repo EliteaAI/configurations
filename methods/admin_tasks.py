@@ -205,6 +205,97 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         return {"migrated": total_migrated, "dry_run": dry_run}
 
     @web.method()
+    def migrate_service_prompt_generate_eval_dimensions(self, *args, **kwargs):
+        """Backfill the 'generate_eval_dimensions' service prompt with the custom_instructions
+        placeholder. Param: [dry_run]
+
+        ``ensure_default_service_prompts`` (run on every plugin boot) only creates missing
+        rows — it never updates an existing one, so environments that already had this prompt
+        seeded before the custom_instructions feature shipped are stuck on the old template text,
+        which has no {custom_instructions_clause} slot for build_eval_dimensions_system_prompt to
+        fill in.
+
+        This task overwrites the seeded row's prompt with the new default ONLY if its current
+        text still matches GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1 (the frozen pre-change
+        default) byte-for-byte after stripping. If an admin has hand-edited the prompt, it will
+        not match and is left untouched — the task logs that it was skipped so a human can merge
+        the placeholder in manually.
+
+        Idempotent: after a successful (non-dry) run the row's text equals the new default, which
+        no longer matches V1, so re-running reports it as already up to date.
+
+        Param format (optional):
+            "dry_run" - report what would change without writing
+
+        Examples:
+            ""        - live run
+            "dry_run" - dry run
+        """
+        # pylint: disable=C0415
+        from ..models.pd.service_prompt_defaults import (
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT,
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1,
+        )
+
+        param = kwargs.get("param", "") or ""
+        dry_run = any(seg.strip().lower() == "dry_run" for seg in param.split(";"))
+        prefix = "[DRY RUN] " if dry_run else ""
+
+        try:
+            public_project_id = get_public_project_id()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_generate_eval_dimensions: failed to resolve public project id")
+            return {"migrated": 0, "error": "failed to resolve public project id"}
+
+        if not public_project_id:
+            log.error("migrate_service_prompt_generate_eval_dimensions: public project id is not configured")
+            return {"migrated": 0, "error": "public project id is not configured"}
+
+        old_default = GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1.strip()
+
+        try:
+            with db.get_session(public_project_id) as session:
+                cfg = session.query(Configuration).filter_by(
+                    elitea_title="generate_eval_dimensions", type="service_prompt",
+                ).first()
+
+                if not cfg:
+                    log.warning(
+                        "%smigrate_service_prompt_generate_eval_dimensions: no seeded row found "
+                        "— nothing to migrate (a fresh boot will seed the new default directly)",
+                        prefix,
+                    )
+                    return {"migrated": 0, "skipped_custom": False, "dry_run": dry_run}
+
+                current_prompt = (cfg.data or {}).get("prompt", "")
+                if current_prompt.strip() != old_default:
+                    log.warning(
+                        "%smigrate_service_prompt_generate_eval_dimensions: configuration id=%s "
+                        "prompt does not match the known pre-change default — assuming it was "
+                        "customized; leaving it untouched. Merge the custom_instructions "
+                        "placeholder into it by hand if you want the new field to take effect.",
+                        prefix, cfg.id,
+                    )
+                    return {"migrated": 0, "skipped_custom": True, "dry_run": dry_run}
+
+                log.info(
+                    "%smigrate_service_prompt_generate_eval_dimensions: configuration id=%s "
+                    "matches the pre-change default — %s to the new template",
+                    prefix, cfg.id, "would update" if dry_run else "updating",
+                )
+                if not dry_run:
+                    updated_data = deepcopy(cfg.data or {})
+                    updated_data["prompt"] = GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT
+                    cfg.data = updated_data
+                    flag_modified(cfg, "data")
+                    session.commit()
+
+                return {"migrated": 1, "skipped_custom": False, "dry_run": dry_run}
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_generate_eval_dimensions: migration failed")
+            return {"migrated": 0, "error": "migration failed"}
+
+    @web.method()
     def danger_sanitize_secrets_with_value(self, *args, **kwargs):
         """Admin task: sanitize secrets and credentials for staging environments.
 
