@@ -89,6 +89,17 @@ class RPC:
 
         return LlmModelList.model_validate(configuration_model).model_dump(mode='json')
 
+    @web.rpc('configurations_get_model_provider')
+    def configurations_get_model_provider(
+            self, project_id: int, model_name: str, section: str = 'llm'
+    ) -> Optional[str]:
+        """The credential family behind a model — the type of the credential it points at."""
+        for scope in (project_id, get_public_project_id()):
+            provider = _lookup_model_provider(scope, model_name, section)
+            if provider:
+                return provider
+        return None
+
     @web.rpc('configurations_get_available_models')
     def configurations_get_available_models(
             self, project_id: int, section: str = 'llm', include_shared: bool = True
@@ -138,3 +149,28 @@ class RPC:
         service = ModelConfigurationService(project_id)
         response, _ = service.get_models(section, include_shared)
         return response
+
+
+def _lookup_model_provider(project_id: int, model_name: str, section: str) -> Optional[str]:
+    """The model row points at its credential by elitea_title; label collides on case."""
+    with db.get_session(project_id) as session:
+        credential_title = session.query(
+            Configuration.data['ai_credentials']['elitea_title'].astext
+        ).filter(
+            Configuration.section == section,
+            Configuration.data['name'].astext == model_name,
+        ).scalar()
+    #
+    if not credential_title:
+        return None
+    #
+    for scope in (project_id, get_public_project_id()):
+        with db.get_session(scope) as session:
+            credential_type = session.query(Configuration.type).filter(
+                Configuration.elitea_title == credential_title,
+            ).scalar()
+        #
+        if credential_type:
+            return credential_type
+    #
+    return None
