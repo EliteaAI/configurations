@@ -14,6 +14,10 @@ from ..utils_getters import (
 from ..utils_models import ModelConfigurationService
 
 
+# Where every credential row lives; a model row can never be one
+CREDENTIAL_SECTION = 'ai_credentials'
+
+
 class RPC:
     @web.rpc('configurations_get_filtered_personal')
     def configurations_get_filtered_personal(self, user_id, include_shared: bool = False,
@@ -89,6 +93,21 @@ class RPC:
 
         return LlmModelList.model_validate(configuration_model).model_dump(mode='json')
 
+    @web.rpc('configurations_get_model_provider')
+    def configurations_get_model_provider(
+            self, project_id: int, model_name: str, section: str = 'llm'
+    ) -> Optional[str]:
+        """The credential family behind a model — the type of the credential it points at."""
+        public_project_id = get_public_project_id()
+        #
+        provider = _lookup_model_provider(project_id, model_name, section)
+        #
+        if provider or not public_project_id or public_project_id == project_id:
+            return provider
+        #
+        # Only a shared public model is reachable from another project, per expand_configuration
+        return _lookup_model_provider(public_project_id, model_name, section, shared_only=True)
+
     @web.rpc('configurations_get_available_models')
     def configurations_get_available_models(
             self, project_id: int, section: str = 'llm', include_shared: bool = True
@@ -138,3 +157,67 @@ class RPC:
         service = ModelConfigurationService(project_id)
         response, _ = service.get_models(section, include_shared)
         return response
+
+
+def _lookup_model_provider(
+        project_id: int, model_name: str, section: str, shared_only: bool = False,
+) -> Optional[str]:
+    """The model row points at its credential by elitea_title; label collides on case."""
+    filters = [
+        Configuration.project_id == project_id,
+        Configuration.section == section,
+        Configuration.data['name'].astext == model_name,
+    ]
+    #
+    if shared_only:
+        filters.append(Configuration.shared.is_(True))
+    #
+    # Not .scalar(): the model name is not unique, so several rows can answer this
+    with db.get_session(project_id) as session:
+        references = session.query(Configuration.data['ai_credentials']).filter(*filters).all()
+    #
+    titles = _credential_titles(references)
+    #
+    if not titles:
+        return None
+    #
+    return _single_credential_type(project_id, titles)
+
+
+def _credential_titles(references) -> Optional[set]:
+    """None as soon as one candidate is unresolvable here — a guessed family is worse."""
+    titles = set()
+    #
+    for (reference,) in references:
+        # private means the credential lives in its owner's personal project, not this one
+        if not isinstance(reference, dict) or reference.get('private'):
+            return None
+        #
+        title = reference.get('elitea_title')
+        #
+        if not title:
+            return None
+        #
+        titles.add(title)
+    #
+    return titles
+
+
+def _single_credential_type(project_id: int, titles: set) -> Optional[str]:
+    """The family only when every candidate agrees on it; disagreement reads as unknown."""
+    types = set()
+    #
+    with db.get_session(project_id) as session:
+        for title in titles:
+            row = session.query(Configuration.type).filter(
+                Configuration.project_id == project_id,
+                Configuration.section == CREDENTIAL_SECTION,
+                Configuration.elitea_title == title,
+            ).first()
+            #
+            types.add(row[0] if row else None)
+    #
+    if len(types) != 1:
+        return None
+    #
+    return types.pop()
