@@ -93,6 +93,8 @@ def create_configuration(payload: dict) -> Configuration:
     Create a new configuration entity in the database from payload.
     Returns the created Configuration instance.
     """
+    from .routing_access import validate_routing_write
+    payload = validate_routing_write(payload.get('type'), payload.get('project_id'), payload)
     try:
         parsed = ConfigurationCreate.model_validate(payload)
     except ValidationError as ve:
@@ -191,6 +193,10 @@ def delete_configuration(project_id: int, config_id: int):
         config = session.query(Configuration).filter_by(id=config_id).first()
         if not config:
             return None
+        from .routing_access import validate_routing_write
+        validate_routing_write(config.type, project_id, {}, existing={
+            'data': config.data, 'elitea_title': config.elitea_title,
+        }, deleting=True)
         data = ConfigurationDetails.model_validate(config).model_dump(mode='json')
         session.delete(config)
         session.commit()
@@ -210,6 +216,11 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
         config: Configuration = session.query(Configuration).filter_by(id=config_id).first()
         if not config:
             raise ValueError(f"Configuration with id {config_id} not found")
+
+        from .routing_access import validate_routing_write
+        update_payload = validate_routing_write(config.type, project_id, update_payload, existing={
+            'data': config.data, 'elitea_title': config.elitea_title,
+        })
 
         old_elitea_title = config.elitea_title
         
@@ -284,6 +295,8 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                     log.warning(f"Failed to set tier defaults for updated model: {e}")
 
             result = ConfigurationDetails.model_validate(config).model_dump(mode='json')
+            if config.type in {'auto_routing', 'environment_settings'}:
+                event_manager.fire_event('configuration_updated', result)
             if status_changed:
                 event_manager.fire_event('configuration_status_changed', result)
             new_elitea_title = config.elitea_title

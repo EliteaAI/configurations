@@ -52,7 +52,13 @@ class API(APIBase):
         section = request.args.get("section", default="llm").lower()
 
         service = ModelConfigurationService(project_id)
-        return service.get_models(section, include_shared)
+        result, status = service.get_models(section, include_shared)
+        if section == 'llm' and status == 200:
+            from ...routing_settings import get_effective_settings
+            gates = get_effective_settings(project_id)
+            result['auto_routing'] = {'enabled': gates['enabled'], 'revision': gates['revision'],
+                'profile_ref': {'id': 'v7-quality-cost', 'revision': 1}}
+        return result, status
 
     @register_openapi(
         name="Set Default Model",
