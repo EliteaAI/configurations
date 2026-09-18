@@ -155,7 +155,10 @@ class API(APIBase):
         # Gated too: deleting the admin's credential silently stops project tracing
         if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
             return TRACING_DENIED, 403
-        result = delete_configuration(project_id, config_id)
+        try:
+            result = delete_configuration(project_id, config_id)
+        except ConfigurationError as ce:
+            return ce.to_dict(), 400
         if result is None:
             return {"error": "Configuration not found"}, 404
         return {"result": "deleted"}, 204

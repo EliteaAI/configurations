@@ -52,7 +52,16 @@ class API(APIBase):
         section = request.args.get("section", default="llm").lower()
 
         service = ModelConfigurationService(project_id)
-        return service.get_models(section, include_shared)
+        result, status = service.get_models(section, include_shared)
+        if section == 'llm' and status == 200:
+            from ...routing_settings import get_effective_settings
+            from ...model_defaults import effective_default_selection
+            gates = get_effective_settings(project_id)
+            result['auto_routing'] = {'enabled': gates['enabled'], 'revision': gates['revision'],
+                'profile_ref': {'id': 'v7-quality-cost', 'revision': 1}}
+            result['default_selection'] = effective_default_selection(
+                VaultClient.from_project(project_id).get_secrets(), gates)
+        return result, status
 
     @register_openapi(
         name="Set Default Model",
@@ -69,16 +78,23 @@ class API(APIBase):
         except Exception as e:
             return {"error": str(e)}, 400
 
-        secret_key = f'default_{parsed.section}_model_name'
-        secret_key_project = f'default_{parsed.section}_model_project_id'
-
         try:
+            from ...model_defaults import update_default_secrets
+            from ...routing_settings import get_effective_settings
             vault_client = VaultClient.from_project(project_id)
             secrets = vault_client.get_secrets()
-            secrets[secret_key] = parsed.name
-            secrets[secret_key_project] = parsed.target_project_id
-
+            gates = get_effective_settings(project_id) if parsed.mode == 'auto' else {}
+            concrete_default = None
+            if parsed.mode == 'auto' and not (
+                secrets.get('default_llm_model_name') and secrets.get('default_llm_model_project_id')
+            ):
+                concrete_default, status = ModelConfigurationService(project_id).get_models('llm', True)
+                if status != 200:
+                    raise ValueError('Cannot resolve a concrete default model')
+            secrets = update_default_secrets(secrets, parsed, gates, concrete_default)
             vault_client.set_secrets(secrets)
+        except ValueError as e:
+            return {'error': str(e)}, 400
         except Exception as e:
             log.error(f"Error setting default model: {e}")
             return {"result": "error"}, 400

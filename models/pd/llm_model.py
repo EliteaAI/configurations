@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # class Capabilities(BaseModel):
@@ -209,9 +209,19 @@ class VectorStorageModelList(BaseModel):
 
 
 class SetDefaultModel(BaseModel):
-    name: str
-    target_project_id: int
+    name: Optional[str] = None
+    target_project_id: Optional[int] = None
     section: Optional[str] = Field(default='llm')
+    mode: Literal['fixed', 'auto'] = 'fixed'
+
+    @model_validator(mode='after')
+    def validate_default_selection(self):
+        if self.mode == 'auto':
+            if self.section != 'llm' or self.name is not None or self.target_project_id is not None:
+                raise ValueError('Auto is only an LLM default intent, without a fixed model binding')
+        elif not self.name or self.target_project_id is None:
+            raise ValueError('A concrete default requires name and target_project_id')
+        return self
 
     model_config = ConfigDict(
         json_schema_extra={
@@ -224,4 +234,3 @@ class SetDefaultModel(BaseModel):
             ]
         }
     )
-
