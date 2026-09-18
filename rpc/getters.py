@@ -141,8 +141,16 @@ class RPC:
 
     @web.rpc('configurations_get_default_model', 'get_default_model')
     def configurations_get_default_models(
-            self, project_id: int, section: str = "llm", include_shared: bool = True
+            self, project_id: int, section: str = "llm", include_shared: bool = True,
+            surface: str | None = None,
     ) -> dict:
+        # Opt-in only at new-chat/new-Agent creation. Existing internal callers,
+        # Pipelines and legacy missing settings retain concrete resolution.
+        if section == 'llm' and surface in {'chat', 'agent'}:
+            from ..model_defaults import get_default_selection
+            selection = get_default_selection(project_id)
+            if selection:
+                return {'selection': selection}
         service = ModelConfigurationService(project_id)
         response, _ = service.get_models(section, include_shared)
         return {
