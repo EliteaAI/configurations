@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class EnvironmentSettings(BaseModel):
@@ -10,6 +10,17 @@ class EnvironmentSettings(BaseModel):
                 "type": "environment_settings",
             }
         }
+    )
+
+    auto_routing_available: StrictBool = Field(
+        default=False,
+        title="Enable Auto model selection",
+        description="Allow projects to offer Auto for chats and ordinary Agents. Pipelines keep explicit model selection in this release.",
+    )
+    auto_routing_project_default: StrictBool = Field(
+        default=False,
+        title="Enable Auto by default for projects",
+        description="Project default while Auto model selection is enabled. Project admins may opt out or opt in.",
     )
 
     system_sender_name: str = Field(

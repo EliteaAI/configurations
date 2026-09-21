@@ -112,3 +112,22 @@ print(resp.json())
 
 ---
 For more details, see the source code in `plugins/configurations/api/v2/configurations.py`.
+
+## Auto as a creation default
+
+For an enabled project, `POST /api/v2/configurations/models/<project_id>` accepts
+`{"section":"llm","mode":"auto"}`. The project-local
+`default_llm_selection_mode` Vault value records this intent separately from a
+concrete model. If the project currently inherits its concrete default, enabling
+Auto snapshots the effective concrete name and owning project. Selecting a
+concrete LLM default clears the Auto preference. High/low-tier defaults remain
+concrete and do not change this preference.
+
+The models response exposes effective `default_selection` only while both Auto
+gates allow it. Existing concrete default fields and the default-model RPC remain
+concrete. New chat/ordinary-Agent creation opts in using the RPC `surface` argument;
+Pipelines and internal helpers use the retained concrete model. Auto preference
+is not inherited from Public, and changing defaults does not rewrite saved
+chat/Agent selections. No new model configuration or database table is created.
+
+Focused default checks: `python -m pytest tests/unit/test_model_defaults.py tests/unit/test_auto_routing.py -q`.

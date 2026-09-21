@@ -4,6 +4,7 @@ from typing import Any, Optional
 from pydantic import BaseModel, field_validator, model_validator
 
 from .environment_settings import EnvironmentSettings
+from .auto_routing import AutoRoutingProjectSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .project_context import ProjectContext
 from .project_icon import ProjectIcon
@@ -180,4 +181,10 @@ register_config_type(
     type_name='project_icon',
     section='project_settings',
     model=ProjectIcon,
+)
+
+register_config_type(
+    type_name='auto_routing',
+    section='project_settings',
+    model=AutoRoutingProjectSettings,
 )
