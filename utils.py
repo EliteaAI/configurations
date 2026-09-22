@@ -440,6 +440,9 @@ def get_configuration_llm_models_with_limits_query(session, project_id: int, fil
             #       Consider deprecating this fallback once all configs have migrated to "high_tier".
             func.coalesce(Configuration.data["high_tier"], Configuration.data["mid_tier"], 'false').label("high_tier"),
             func.coalesce(Configuration.data["openai_compatible"], 'false').label("openai_compatible"),
+            func.coalesce(
+                Configuration.data["api_protocol"].astext, 'azure'
+            ).label("api_protocol"),
         )
         .distinct()
         .join(
