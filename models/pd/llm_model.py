@@ -49,6 +49,16 @@ class LlmModel(BaseModel):
         json_schema_extra={'configuration_sections': ['ai_credentials',],}
     )
 
+    @model_validator(mode='after')
+    def validate_reasoning_protocol(self):
+        # DIAL's azure-shaped route rejects the thinking field; reasoning needs anthropic/openai
+        if self.api_protocol == 'azure' and self.supports_reasoning:
+            raise ValueError(
+                "api_protocol='azure' does not support reasoning; "
+                "use 'anthropic' or 'openai' when 'Supports Reasoning' is enabled"
+            )
+        return self
+
 
 class EmbeddingModel(BaseModel):
     model_config = ConfigDict(
