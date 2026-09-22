@@ -35,11 +35,29 @@ class LlmModel(BaseModel):
     low_tier: Optional[bool] = False
     high_tier: Optional[bool] = False
     openai_compatible: Optional[bool] = False
+    api_protocol: Literal['azure', 'openai', 'anthropic'] = Field(
+        default='azure',
+        description=(
+            "Upstream API protocol to route this model through. 'azure' suits most models; "
+            "'anthropic' is required for Claude thinking/reasoning effort; "
+            "'openai' targets the OpenAI Responses API and is not supported for Claude models"
+        )
+    )
 
     ai_credentials: Optional[AiCredentials] = Field(
         default=None,
         json_schema_extra={'configuration_sections': ['ai_credentials',],}
     )
+
+    @model_validator(mode='after')
+    def validate_reasoning_protocol(self):
+        # DIAL's azure-shaped route rejects the thinking field; reasoning needs anthropic/openai
+        if self.api_protocol == 'azure' and self.supports_reasoning:
+            raise ValueError(
+                "api_protocol='azure' does not support reasoning; "
+                "use 'anthropic' or 'openai' when 'Supports Reasoning' is enabled"
+            )
+        return self
 
 
 class EmbeddingModel(BaseModel):
@@ -113,6 +131,7 @@ class LlmModelList(BaseModel):
     low_tier: Optional[bool] = False
     high_tier: Optional[bool] = False
     openai_compatible: Optional[bool] = False
+    api_protocol: Literal['azure', 'openai', 'anthropic'] = 'azure'
 
     model_config = ConfigDict(from_attributes=True)
 
