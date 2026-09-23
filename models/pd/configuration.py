@@ -138,7 +138,10 @@ class ConfigurationCreate(BaseModel):
         if entry.model:
             # TODO: temp fix for pydantic v1
             if hasattr(entry.model, 'model_validate'):
-                validated: BaseModel = entry.model.model_validate(v)
+                from ...utils import ai_credential_type_context
+
+                context = ai_credential_type_context(info.data.get('project_id'), info.data.get('author_id'))
+                validated: BaseModel = entry.model.model_validate(v, context=context)
                 return validated.model_dump(mode='python')
             else:
                 validated = entry.model.parse_obj(v)

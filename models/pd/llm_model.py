@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
 
 
 # class Capabilities(BaseModel):
@@ -35,10 +35,11 @@ class LlmModel(BaseModel):
     low_tier: Optional[bool] = False
     high_tier: Optional[bool] = False
     openai_compatible: Optional[bool] = False
-    api_protocol: Literal['azure', 'openai', 'anthropic'] = Field(
-        default='azure',
+    api_protocol: Optional[Literal['azure', 'openai', 'anthropic']] = Field(
+        default=None,
         description=(
-            "Upstream API protocol to route this model through. 'azure' suits most models; "
+            "Upstream API protocol to route this model through (DIAL credentials only; unset means 'azure'). "
+            "'azure' suits most models; "
             "'anthropic' is required for Claude thinking/reasoning effort; "
             "'openai' targets the OpenAI Responses API and is not supported for Claude models"
         )
@@ -50,9 +51,12 @@ class LlmModel(BaseModel):
     )
 
     @model_validator(mode='after')
-    def validate_reasoning_protocol(self):
-        # DIAL's azure-shaped route rejects the thinking field; reasoning needs anthropic/openai
+    def validate_reasoning_protocol(self, info: ValidationInfo):
+        # DIAL's azure-shaped route rejects the thinking field; credential type is resolved only when needed
         if self.api_protocol == 'azure' and self.supports_reasoning:
+            resolve_credential_type = (info.context or {}).get('resolve_ai_credential_type')
+            if not resolve_credential_type or resolve_credential_type(self.ai_credentials) != 'ai_dial':
+                return self
             raise ValueError(
                 "api_protocol='azure' does not support reasoning; "
                 "use 'anthropic' or 'openai' when 'Supports Reasoning' is enabled"
