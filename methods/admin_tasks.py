@@ -206,23 +206,22 @@ class Method:  # pylint: disable=E1101,R0903,W0201
 
     @web.method()
     def migrate_service_prompt_generate_eval_dimensions(self, *args, **kwargs):
-        """Backfill the 'generate_eval_dimensions' service prompt with the custom_instructions
-        placeholder. Param: [dry_run]
+        """Upgrade the 'generate_eval_dimensions' service prompt to the current default.
+        Param: [dry_run]
 
         ``ensure_default_service_prompts`` (run on every plugin boot) only creates missing
-        rows — it never updates an existing one, so environments that already had this prompt
-        seeded before the custom_instructions feature shipped are stuck on the old template text,
-        which has no {custom_instructions_clause} slot for build_eval_dimensions_system_prompt to
-        fill in.
+        rows — it never updates an existing one, so environments seeded with an earlier default
+        stay on it: V1 has no {custom_instructions_clause} slot, and V1/V2 both tell the model to
+        leave targets null, so drafts arrive without a target.
 
-        This task overwrites the seeded row's prompt with the new default ONLY if its current
-        text still matches GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1 (the frozen pre-change
-        default) byte-for-byte after stripping. If an admin has hand-edited the prompt, it will
-        not match and is left untouched — the task logs that it was skipped so a human can merge
-        the placeholder in manually.
+        This task overwrites the seeded row's prompt with the current default ONLY if its text
+        still matches one of the frozen past defaults (GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1
+        or _V2) byte-for-byte after stripping. If an admin has hand-edited the prompt, it will not
+        match and is left untouched — the task logs that it was skipped so a human can merge the
+        changes in manually.
 
-        Idempotent: after a successful (non-dry) run the row's text equals the new default, which
-        no longer matches V1, so re-running reports it as already up to date.
+        Idempotent: after a successful (non-dry) run the row's text equals the current default,
+        so re-running reports it as already up to date.
 
         Param format (optional):
             "dry_run" - report what would change without writing
@@ -235,6 +234,7 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         from ..models.pd.service_prompt_defaults import (
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT,
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1,
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2,
         )
 
         param = kwargs.get("param", "") or ""
@@ -251,7 +251,11 @@ class Method:  # pylint: disable=E1101,R0903,W0201
             log.error("migrate_service_prompt_generate_eval_dimensions: public project id is not configured")
             return {"migrated": 0, "error": "public project id is not configured"}
 
-        old_default = GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1.strip()
+        past_defaults = {
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1.strip(),
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2.strip(),
+        }
+        current_default = GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT.strip()
 
         try:
             with db.get_session(public_project_id) as session:
@@ -267,20 +271,29 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                     )
                     return {"migrated": 0, "skipped_custom": False, "dry_run": dry_run}
 
-                current_prompt = (cfg.data or {}).get("prompt", "")
-                if current_prompt.strip() != old_default:
+                current_prompt = ((cfg.data or {}).get("prompt") or "").strip()
+                if current_prompt == current_default:
+                    log.info(
+                        "%smigrate_service_prompt_generate_eval_dimensions: configuration id=%s "
+                        "is already on the current default — nothing to do",
+                        prefix, cfg.id,
+                    )
+                    return {"migrated": 0, "skipped_custom": False, "dry_run": dry_run}
+
+                if current_prompt not in past_defaults:
                     log.warning(
                         "%smigrate_service_prompt_generate_eval_dimensions: configuration id=%s "
-                        "prompt does not match the known pre-change default — assuming it was "
-                        "customized; leaving it untouched. Merge the custom_instructions "
-                        "placeholder into it by hand if you want the new field to take effect.",
+                        "prompt does not match any known past default — assuming it was "
+                        "customized; leaving it untouched. Merge the current default's changes "
+                        "(custom_instructions slot, target rules) into it by hand if you want them "
+                        "to take effect.",
                         prefix, cfg.id,
                     )
                     return {"migrated": 0, "skipped_custom": True, "dry_run": dry_run}
 
                 log.info(
                     "%smigrate_service_prompt_generate_eval_dimensions: configuration id=%s "
-                    "matches the pre-change default — %s to the new template",
+                    "matches a past default — %s to the current template",
                     prefix, cfg.id, "would update" if dry_run else "updating",
                 )
                 if not dry_run:

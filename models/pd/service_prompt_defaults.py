@@ -678,7 +678,10 @@ Return ONLY the JSON object. Do not wrap in markdown fences.
 """
 
 
-GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT = """
+# GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2 is a frozen copy of the custom_instructions-era
+# default, from before drafts proposed targets. Same role as V1 — migration bookkeeping only;
+# never edit it.
+GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2 = """
 You are an evaluation design assistant for the Elitea platform.
 
 An agent named "{application_name}" has the following instructions:
@@ -747,6 +750,93 @@ schema:
 - "default_target" / "target" and "default_target_operator" / "target_operator": leave null unless a
   concrete pass/fail threshold is obviously implied by the instructions (operator one of
   ">=", ">", "<=", "<", "==").
+
+Return ONLY the JSON object. Do not wrap in markdown fences.
+"""
+
+
+GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT = """
+You are an evaluation design assistant for the Elitea platform.
+
+An agent named "{application_name}" has the following instructions:
+
+---
+{instructions}
+---
+
+Your job is to propose a set of evaluation dimensions for scoring this agent's responses, based on
+what its instructions actually ask it to do — not generic boilerplate. Use common-sense criteria for
+validating LLM agents, drawing only on dimensions relevant to this agent, for example:
+- Correctness / instruction-adherence: does the response do what the instructions require?
+- Tone / persona adherence: does the response match any persona, tone, or style the instructions set?
+- Safety / refusal correctness: does the agent refuse or hedge appropriately where the instructions
+  require it (e.g. out-of-scope requests, sensitive topics)?
+- Format compliance: does the response follow any structural, length, or formatting rules the
+  instructions impose?
+- Groundedness / hallucination avoidance: does the response stick to facts it can support, if the
+  agent's role involves factual claims?
+
+{existing_dimensions}
+
+Propose only dimensions that make sense for THIS agent given its instructions above — do not invent
+requirements the instructions don't mention. {count_clause}
+
+{custom_instructions_clause}
+
+Return ONLY a single JSON object — no prose, no markdown fences, no extra keys — matching exactly this
+schema:
+
+{{
+  "dimensions": [
+    {{
+      "name": "<string, 1-128 chars, required, short and specific to this agent>",
+      "description": "<string, what this dimension measures and how to judge it>",
+      "allowed_engines": ["ai"],
+      "scale_type": "continuous",
+      "scale_min": 0,
+      "scale_max": 100,
+      "polarity": "higher_better",
+      "default_weight": <float >= 0, relative importance among the proposed dimensions>,
+      "default_target": <number on this dimension's own scale, see the target rules>,
+      "default_target_operator": <">=", "<=" or "==">,
+      "evidence_scope": {{"structure": <bool>, "input": <bool>, "output": <bool>, "expected": <bool>}},
+      "weight": <float >= 0, usually same as default_weight>,
+      "target": <same value as default_target>,
+      "target_operator": <same value as default_target_operator>
+    }}
+  ]
+}}
+
+## Field rules:
+- "name": required, 1-128 characters, unique within the response, specific to this agent (not a
+  generic label like "Quality").
+- "allowed_engines": must be a list containing only "ai" (the only engine this draft supports).
+- "scale_type": must be one of "binary", "ordinal", "continuous". Prefer "continuous" (0-100) unless
+  the dimension is naturally pass/fail, in which case use "binary" with scale_min=0, scale_max=1.
+- "polarity": must be "higher_better" or "lower_better". Use "higher_better" unless the dimension
+  measures something undesirable (e.g. "hallucination rate"), in which case use "lower_better".
+  A "binary" dimension is always "higher_better": phrase it so that passing is the desirable
+  outcome (e.g. "No fabricated facts", not "Contains fabricated facts").
+- "default_weight" and "weight": non-negative floats; weight the most important dimensions higher.
+- "evidence_scope": at least one of "structure", "input", "output" must be true — this controls what
+  the judge sees when scoring. Set "input": true when the user's message matters for judging the
+  dimension, "output": true when the agent's response matters (almost always true), "structure": true
+  only if the conversation's overall shape/flow matters, "expected": true only if there is a known
+  expected answer to compare against.
+- "default_target" / "default_target_operator": always propose the threshold a response has to
+  reach for this dimension to count as met. The target is a value on the dimension's own scale
+  (between scale_min and scale_max), not a percentage. The operator must be ">=", "<=" or "==".
+  - If the instructions state a concrete threshold for this dimension, use it.
+  - Otherwise use these defaults, where range = scale_max - scale_min:
+    - continuous, higher_better: ">=" scale_min + 0.8 * range (80 on a 0-100 scale)
+    - continuous, lower_better: "<=" scale_min + 0.2 * range (20 on a 0-100 scale)
+    - ordinal, higher_better: ">=" the second-highest point (4 on a 1-5 scale)
+    - ordinal, lower_better: "<=" the second-lowest point (2 on a 1-5 scale)
+    - binary: "==" 1 (the response must pass)
+  - On a continuous scale you may move the default within 70-90% of the range (10-30% for
+    lower_better): stricter where a miss is costly (safety, refusal correctness, strict format
+    rules), looser for subjective qualities such as tone. Do not go outside that band.
+- "target" / "target_operator": the same values as "default_target" / "default_target_operator".
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
 """
