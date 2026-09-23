@@ -7,6 +7,7 @@ from .environment_settings import EnvironmentSettings
 from .auto_routing import AutoRoutingProjectSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .project_context import ProjectContext
+from .project_chat_config import ProjectChatConfig
 from .project_icon import ProjectIcon
 from .service_prompt import ServicePrompt
 from ...local_tools import log
@@ -187,4 +188,10 @@ register_config_type(
     type_name='auto_routing',
     section='project_settings',
     model=AutoRoutingProjectSettings,
+)
+
+register_config_type(
+    type_name='project_chat_config',
+    section='project_settings',
+    model=ProjectChatConfig,
 )
