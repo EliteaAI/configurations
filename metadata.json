@@ -1,6 +1,6 @@
 {
   "name": "configurations",
-  "version": "0.178",
+  "version": "0.179",
   "depends_on": [
     "shared"
   ],
