@@ -234,12 +234,14 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                 # data is replaced wholesale, so validate it exactly as create does (raw, before secret handling)
                 if config.type != 'service_prompt' and entry.model and hasattr(entry.model, 'model_validate'):
                     try:
-                        entry.model.model_validate(
+                        validated = entry.model.model_validate(
                             update_payload['data'],
                             context=ai_credential_type_context(project_id, config.author_id),
                         )
                     except ValidationError as ve:
                         raise handle_validation_error(ve)
+                    if config.type == 'llm_model' and 'description' in update_payload['data']:
+                        update_payload['data']['description'] = validated.description
 
                 # entry.config_schema is the "data" schema, so we get properties directly
                 data_properties = entry.config_schema.get("properties", {})
@@ -475,6 +477,7 @@ def get_configuration_llm_models_with_limits_query(session, project_id: int, fil
             Configuration.shared,
             Configuration.data["name"].label("name"),
             Configuration.label.label("display_name"),
+            Configuration.data["description"].astext.label("description"),
             Configuration.data['context_window'].label('context_window'),
             cast(Configuration.data['max_output_tokens'], Integer).label('max_output_tokens'),
             func.coalesce(Configuration.data["supports_vision"], 'true').cast(Boolean).label("supports_vision"),
