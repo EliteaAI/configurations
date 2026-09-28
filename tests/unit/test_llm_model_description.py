@@ -121,7 +121,7 @@ def test_models_listing_selects_description_as_text(modules):
     query = modules.utils.get_configuration_llm_models_with_limits_query(Session(), 1, [])
     assert 'description' in [column['name'] for column in query.column_descriptions]
     compiled = query.statement.compile(dialect=postgresql.dialect())
-    description_sql = re.search(r"configuration\.data ->> %\((\w+)\)s AS description", str(compiled))
+    description_sql = re.search(r"configuration\.data ->> %\((\w+)\)s(?:::TEXT)? AS description", str(compiled))
     assert description_sql and compiled.params[description_sql.group(1)] == 'description'
 
 
