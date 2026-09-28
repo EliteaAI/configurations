@@ -1,6 +1,6 @@
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
 
 # class Capabilities(BaseModel):
@@ -25,6 +25,11 @@ class LlmModel(BaseModel):
         }
     )
     name: str
+    description: Optional[str] = Field(
+        default=None,
+        max_length=40,
+        description="Display-only tagline shown under the model name in pickers; never sent to the provider"
+    )
     context_window: int = 128000
     max_output_tokens: int = 16000
     supports_reasoning: Optional[bool] = False
@@ -49,6 +54,13 @@ class LlmModel(BaseModel):
         default=None,
         json_schema_extra={'configuration_sections': ['ai_credentials',],}
     )
+
+    @field_validator('description', mode='before')
+    @classmethod
+    def blank_description_to_none(cls, value):
+        if isinstance(value, str):
+            return value.strip() or None
+        return value
 
     @model_validator(mode='after')
     def validate_reasoning_protocol(self, info: ValidationInfo):
@@ -126,6 +138,7 @@ class ASRModel(BaseModel):
 class LlmModelList(BaseModel):
     name: str
     display_name: str
+    description: Optional[str] = None
     project_id: int
     shared: bool = False
     context_window: int = 128000
