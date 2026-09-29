@@ -211,12 +211,13 @@ class Method:  # pylint: disable=E1101,R0903,W0201
 
         ``ensure_default_service_prompts`` (run on every plugin boot) only creates missing
         rows — it never updates an existing one, so environments seeded with an earlier default
-        stay on it: V1 has no {custom_instructions_clause} slot, and V1/V2 both tell the model to
-        leave targets null, so drafts arrive without a target.
+        stay on it: V1 has no {custom_instructions_clause} slot, V1/V2 both tell the model to leave
+        targets null, so drafts arrive without a target, and V3 asks for a 0-100 scale and
+        free-float weights, so drafts open with Custom scale and importance.
 
         This task overwrites the seeded row's prompt with the current default ONLY if its text
-        still matches one of the frozen past defaults (GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1
-        or _V2) byte-for-byte after stripping. If an admin has hand-edited the prompt, it will not
+        still matches one of the frozen past defaults (GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1,
+        _V2 or _V3) byte-for-byte after stripping. If an admin has hand-edited the prompt, it will not
         match and is left untouched — the task logs that it was skipped so a human can merge the
         changes in manually.
 
@@ -235,6 +236,7 @@ class Method:  # pylint: disable=E1101,R0903,W0201
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT,
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1,
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2,
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V3,
         )
 
         param = kwargs.get("param", "") or ""
@@ -254,6 +256,7 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         past_defaults = {
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V1.strip(),
             GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V2.strip(),
+            GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V3.strip(),
         }
         current_default = GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT.strip()
 
