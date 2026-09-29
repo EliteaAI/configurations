@@ -2,6 +2,10 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
 
+EffortLevel = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+ThinkingType = Literal['adaptive', 'enabled', 'always_on']
+BUDGET_EFFORT_LEVELS = ('low', 'medium', 'high')
+
 
 # class Capabilities(BaseModel):
 #     image_processing: bool = False
@@ -50,6 +54,28 @@ class LlmModel(BaseModel):
         )
     )
 
+    thinking_type: Optional[ThinkingType] = Field(
+        default=None,
+        description=(
+            "Anthropic thinking mode. 'adaptive': the model decides how much to think; "
+            "'enabled': legacy token budget for Claude 4.5 and older; "
+            "'always_on': adaptive and the provider rejects turning it off (Fable, Mythos, Opus 5.5). "
+            "Null for non-Anthropic models and for rows configured before this field existed"
+        )
+    )
+    supported_efforts: Optional[list[EffortLevel]] = Field(
+        default=None,
+        description=(
+            "Effort levels users may pick for this model. Null keeps today's behaviour (low, medium, high). "
+            "With thinking_type 'enabled' the levels map to a thinking token budget"
+        )
+    )
+    default_effort: Optional[EffortLevel] = Field(
+        default=None,
+        validate_default=True,
+        description="Effort used when a user has not chosen one; must be one of supported_efforts and never 'none'"
+    )
+
     ai_credentials: Optional[AiCredentials] = Field(
         default=None,
         json_schema_extra={'configuration_sections': ['ai_credentials',],}
@@ -60,6 +86,49 @@ class LlmModel(BaseModel):
     def blank_description_to_none(cls, value):
         if isinstance(value, str):
             return value.strip() or None
+        return value
+
+    @field_validator('thinking_type', 'supported_efforts', 'default_effort')
+    @classmethod
+    def reasoning_fields_need_reasoning_support(cls, value, info: ValidationInfo):
+        if value is not None and not info.data.get('supports_reasoning'):
+            raise ValueError("requires 'Supports Reasoning' to be enabled")
+        return value
+
+    @field_validator('supported_efforts')
+    @classmethod
+    def validate_supported_efforts(cls, value, info: ValidationInfo):
+        if value is None:
+            return value
+        levels = list(dict.fromkeys(value))
+        if not levels:
+            raise ValueError('at least one effort level is required')
+        thinking_type = info.data.get('thinking_type')
+        if thinking_type == 'enabled':
+            beyond_budget = [level for level in levels if level not in BUDGET_EFFORT_LEVELS]
+            if beyond_budget:
+                raise ValueError(
+                    f"thinking_type 'enabled' maps levels to a token budget and only accepts "
+                    f"{', '.join(BUDGET_EFFORT_LEVELS)}; remove {', '.join(beyond_budget)}"
+                )
+        if thinking_type == 'always_on' and 'none' in levels:
+            raise ValueError("thinking_type 'always_on' cannot offer 'none'")
+        return levels
+
+    @field_validator('default_effort')
+    @classmethod
+    def validate_default_effort(cls, value, info: ValidationInfo):
+        supported = info.data.get('supported_efforts')
+        if value is None:
+            if supported:
+                raise ValueError('required when supported_efforts is set')
+            return value
+        if value == 'none':
+            raise ValueError("cannot be 'none'")
+        if not supported:
+            raise ValueError('requires supported_efforts')
+        if value not in supported:
+            raise ValueError(f"must be one of supported_efforts: {', '.join(supported)}")
         return value
 
     @model_validator(mode='after')
@@ -149,6 +218,9 @@ class LlmModelList(BaseModel):
     high_tier: Optional[bool] = False
     openai_compatible: Optional[bool] = False
     api_protocol: Literal['azure', 'openai', 'anthropic'] = 'azure'
+    thinking_type: Optional[str] = None
+    supported_efforts: Optional[list[str]] = None
+    default_effort: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
