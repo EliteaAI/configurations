@@ -205,10 +205,10 @@ def test_platform_lock_disappears_when_the_claude_off_path_ships(profiles, monke
 
 
 @pytest.mark.parametrize('profile_id,thinking_type,efforts,default', [
-    ('anthropic-fable-mythos', 'always_on', ['low', 'medium', 'high', 'xhigh', 'max'], 'high'),
+    ('anthropic-fable-mythos', 'always_on', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
     ('anthropic-opus-5-5', 'always_on', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
-    ('anthropic-adaptive', 'adaptive', ['low', 'medium', 'high', 'xhigh', 'max'], 'high'),
-    ('anthropic-4-6', 'adaptive', ['low', 'medium', 'high', 'max'], 'high'),
+    ('anthropic-adaptive', 'adaptive', ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
+    ('anthropic-4-6', 'adaptive', ['low', 'medium', 'high', 'max'], 'medium'),
     ('anthropic-legacy-budget', 'enabled', ['low', 'medium', 'high'], 'medium'),
     ('openai-gpt-5-pro', None, ['high'], 'high'),
     ('openai-gpt-6-astra', None, ['low', 'medium', 'high', 'xhigh', 'max'], 'medium'),
@@ -352,6 +352,7 @@ class _Configuration(_Base):
     shared: Mapped[bool] = mapped_column(Boolean)
     status_ok: Mapped[bool] = mapped_column(Boolean)
     author_id: Mapped[int] = mapped_column(Integer)
+    updated_at: Mapped[str] = mapped_column(String, nullable=True)
 
 
 def _stub(name, **attrs):
@@ -409,3 +410,152 @@ def test_update_re_applies_the_profile_bound_after_schema_validation(utils_modul
         utils_module.update_configuration(1, 7, {'data': _data(name='claude-fable-5-1', thinking_type='adaptive',
                                                                supported_efforts=['low'], default_effort='low')})
     assert caught.value.field == 'thinking_type' and 'always_on' in caught.value.message
+
+
+# --- backfill (R-2.0.7 admin task) -------------------------------------------------------
+
+def _row(**data):
+    return {'name': 'gpt-5.4', 'supports_reasoning': True, **data}
+
+
+@pytest.mark.parametrize('data,outcome', [
+    (_row(supports_reasoning=False), 'not_reasoning'),
+    (_row(supports_reasoning=None), 'not_reasoning'),
+    (_row(default_effort='high'), 'already_configured'),
+    (_row(supported_efforts=[]), 'already_configured'),
+    (_row(name='gpt-4-azure'), 'profile_without_reasoning'),
+    (_row(name='gpt-5-chat-latest'), 'profile_without_reasoning'),
+    (None, 'not_reasoning'),
+])
+def test_backfill_leaves_rows_it_must_not_touch(profiles, data, outcome):
+    assert profiles.reasoning_backfill_patch(data) == (None, outcome)
+
+
+@pytest.mark.parametrize('name,outcome,expected', [
+    ('global.anthropic.claude-sonnet-5', 'anthropic-adaptive',
+     {'thinking_type': 'adaptive', 'supported_efforts': ['low', 'medium', 'high', 'xhigh', 'max'], 'default_effort': 'medium'}),
+    ('claude-fable-5-1', 'anthropic-fable-mythos',
+     {'thinking_type': 'always_on', 'supported_efforts': ['low', 'medium', 'high', 'xhigh', 'max'], 'default_effort': 'medium'}),
+    ('eu.anthropic.claude-haiku-4-5-20251001-v1:0', 'anthropic-legacy-budget',
+     {'thinking_type': 'enabled', 'supported_efforts': ['low', 'medium', 'high'], 'default_effort': 'medium'}),
+    ('global.openai.gpt-5.6-luna', 'openai-gpt-5-6',
+     {'thinking_type': None, 'supported_efforts': ['none', 'low', 'medium', 'high', 'xhigh'], 'default_effort': 'medium'}),
+    ('gpt-5-pro', 'openai-gpt-5-pro', {'thinking_type': None, 'supported_efforts': ['high'], 'default_effort': 'high'}),
+    ('global.xai.grok-4.6', 'unrecognized',
+     {'thinking_type': None, 'supported_efforts': ['low', 'medium', 'high'], 'default_effort': 'medium'}),
+    ('model-router', 'unrecognized',
+     {'thinking_type': None, 'supported_efforts': ['low', 'medium', 'high'], 'default_effort': 'medium'}),
+])
+def test_backfill_writes_the_profile_levels_with_medium_as_default(profiles, LlmModel, name, outcome, expected):
+    patch, got = profiles.reasoning_backfill_patch(_row(name=name))
+    assert (patch, got) == (expected, outcome)
+    LlmModel.model_validate(_data(name=name, **patch))
+    profiles.check_llm_model_profile_bounds('llm_model', _data(name=name, **patch))
+    assert profiles.reasoning_backfill_patch({**_row(name=name), **patch}) == (None, 'already_configured')
+
+
+def test_backfill_patch_does_not_alias_the_profile_list(profiles):
+    patch, _ = profiles.reasoning_backfill_patch(_row(name='gpt-5.2'))
+    patch['supported_efforts'].append('max')
+    assert 'max' not in profiles.recognize_profile('gpt-5.2')['supported_efforts']
+
+
+class _FakeSession:
+    def __init__(self, rows):
+        self.rows = rows
+        self.executed = []
+        self.commits = 0
+
+    def query(self, model):
+        return self
+
+    def filter(self, *conditions):
+        return self
+
+    def all(self):
+        return self.rows
+
+    def execute(self, statement):
+        self.executed.append(statement)
+
+    def commit(self):
+        self.commits += 1
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+@pytest.fixture
+def task_module():
+    package = PACKAGE + '_task'
+    for suffix, path in [('', ROOT), ('.models', ROOT / 'models'), ('.methods', ROOT / 'methods')]:
+        module = types.ModuleType(package + suffix)
+        module.__path__ = [str(path)]
+        sys.modules[module.__name__] = module
+    sys.modules[f'{package}.common_utils'] = _stub('common_utils', get_public_project_id=lambda: 1)
+    sys.modules[f'{package}.models.configuration'] = _stub('models.configuration', Configuration=_Configuration)
+    yield importlib.import_module(f'{package}.methods.admin_tasks')
+    for name in [m for m in sys.modules if m.startswith(package)]:
+        del sys.modules[name]
+
+
+def _task(task_module, session):
+    method = task_module.Method.__new__(task_module.Method)
+    method.context = types.SimpleNamespace(rpc_manager=types.SimpleNamespace(
+        call=types.SimpleNamespace(project_list=lambda: [{'id': 1}])))
+    task_module.db = types.SimpleNamespace(with_project_schema_session=lambda project_id: session)
+    return method.backfill_llm_model_reasoning_profiles
+
+
+def _stored(id_, **data):
+    return _Configuration(id=id_, project_id=1, type='llm_model', section='llm', elitea_title=f'm{id_}',
+                          author_id=1, shared=False, status_ok=True, data=_data(**data))
+
+
+def test_task_dry_run_reports_without_writing(task_module):
+    session = _FakeSession([
+        _stored(1, name='global.anthropic.claude-sonnet-5'),
+        _stored(2, name='gpt-4-azure'),
+        _stored(3, name='gpt-4.1', supports_reasoning=False),
+        _stored(4, name='gpt-5.4', default_effort='high', supported_efforts=['high']),
+    ])
+    result = _task(task_module, session)(param='project_id=all;dry_run')
+    assert result == {'backfilled': 1, 'dry_run': True, 'failed_projects': [],
+                      'skipped': {'profile_without_reasoning': 1, 'not_reasoning': 1, 'already_configured': 1}}
+    assert session.executed == [] and session.commits == 0
+
+
+def test_task_live_run_updates_only_backfillable_rows_and_keeps_updated_at(task_module):
+    session = _FakeSession([_stored(1, name='global.openai.gpt-5.6-luna'), _stored(2, name='gpt-4-azure')])
+    result = _task(task_module, session)(param='project_id=1')
+    assert result['backfilled'] == 1 and result['skipped'] == {'profile_without_reasoning': 1}
+    assert len(session.executed) == 1 and session.commits == 1
+    compiled = session.executed[0].compile(dialect=postgresql.dialect())
+    assert compiled.params['id_1'] == 1
+    assert compiled.params['data'] == {**_data(name='global.openai.gpt-5.6-luna'), 'thinking_type': None,
+                                       'supported_efforts': ['none', 'low', 'medium', 'high', 'xhigh'],
+                                       'default_effort': 'medium'}
+    assert 'updated_at=configuration.updated_at' in str(compiled).replace(' ', '')
+
+
+def test_task_requires_a_project_selector(task_module):
+    assert 'error' in _task(task_module, _FakeSession([]))(param='dry_run')
+
+
+def test_task_counts_a_project_only_after_its_commit_succeeds(task_module):
+    class _FailingSession(_FakeSession):
+        def commit(self):
+            raise RuntimeError('db down')
+
+    session = _FailingSession([_stored(1, name='global.openai.gpt-5.6-luna'), _stored(2, name='gpt-4-azure')])
+    result = _task(task_module, session)(param='project_id=1')
+    assert result == {'backfilled': 0, 'skipped': {}, 'failed_projects': [1], 'dry_run': False}
+
+
+def test_every_profile_offering_medium_defaults_to_it(profiles):
+    for profile in profiles.PROFILES:
+        if 'medium' in profile['supported_efforts']:
+            assert profile['default_effort'] == 'medium', profile['id']

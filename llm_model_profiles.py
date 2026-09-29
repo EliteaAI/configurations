@@ -23,7 +23,14 @@ PROFILE_LIST_VERSION = 1
 EFFORT_LEVELS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 THINKING_TYPES = ('adaptive', 'enabled', 'always_on')
 BUDGET_EFFORT_LEVELS = ('low', 'medium', 'high')
+CAPABILITY_FIELDS = ('thinking_type', 'supported_efforts', 'default_effort')
 
+# What a row without stored levels has always offered, and the default every backfilled row gets (R-2.0.7)
+FALLBACK_SUPPORTED_EFFORTS = ('low', 'medium', 'high')
+BACKFILL_DEFAULT_EFFORT = 'medium'
+
+# Every profile that offers medium defaults to it (R-2.0.7: medium for everyone); the provider
+# defaults (high on current Claude) stay documented in _investigations/5874/00.
 # Claude 4.6 to Opus 5 accept thinking off, but the platform has no path that sends it:
 # a stored "off" would reach the SDK as a truthy effort. The UI locks the toggle on those
 # profiles until the off path ships; the stored data stays provider-accurate.
@@ -51,7 +58,7 @@ PROFILES = (
     _profile(
         'anthropic-fable-mythos', 'Anthropic Claude Fable / Mythos', ('fable', 'mythos'),
         thinking_type='always_on', supported_efforts=('low', 'medium', 'high', 'xhigh', 'max'),
-        default_effort='high',
+        default_effort='medium',
         notes=('Thinking cannot be turned off for this model.',),
     ),
     _profile(
@@ -64,12 +71,12 @@ PROFILES = (
         'anthropic-adaptive', 'Anthropic Claude Opus 5 / Sonnet 5 / Opus 4.7-4.8',
         ('opus-5', 'sonnet-5', 'opus-4-8', 'opus-4-7'),
         thinking_type='adaptive', supported_efforts=('low', 'medium', 'high', 'xhigh', 'max'),
-        default_effort='high',
+        default_effort='medium',
     ),
     _profile(
         'anthropic-4-6', 'Anthropic Claude Opus 4.6 / Sonnet 4.6', ('opus-4-6', 'sonnet-4-6'),
         thinking_type='adaptive', supported_efforts=('low', 'medium', 'high', 'max'),
-        default_effort='high',
+        default_effort='medium',
         notes=('Claude 4.6 does not accept the xhigh effort level.',),
     ),
     _profile(
@@ -215,3 +222,33 @@ def check_llm_model_profile_bounds(config_type, data):
         raise ConfigurationError(
             'supported_efforts', f"{label} does not support effort level(s): {', '.join(unsupported)}"
         )
+
+
+def reasoning_backfill_patch(data):
+    """The capability fields an existing model row should get, and why or why not.
+
+    Reasoning rows recognized by name take their profile's levels and thinking mode; unrecognized
+    reasoning rows are written down as what they already offer (low/medium/high). The default is
+    medium wherever the levels allow it, otherwise the profile's own default. Rows that already
+    carry any of the fields, non-reasoning rows and rows whose family has no reasoning are left
+    for the admin.
+    """
+    data = data if isinstance(data, dict) else {}
+    if not data.get('supports_reasoning'):
+        return None, 'not_reasoning'
+    if any(data.get(field) is not None for field in CAPABILITY_FIELDS):
+        return None, 'already_configured'
+    profile = recognize_profile(data.get('name'))
+    if profile is None:
+        levels, thinking_type, profile_default, outcome = FALLBACK_SUPPORTED_EFFORTS, None, None, 'unrecognized'
+    elif not profile['supports_reasoning']:
+        return None, 'profile_without_reasoning'
+    else:
+        levels, thinking_type, profile_default = profile['supported_efforts'], profile['thinking_type'], profile['default_effort']
+        outcome = profile['id']
+    default_effort = BACKFILL_DEFAULT_EFFORT if BACKFILL_DEFAULT_EFFORT in levels else profile_default
+    return {
+        'thinking_type': thinking_type,
+        'supported_efforts': list(levels),
+        'default_effort': default_effort,
+    }, outcome

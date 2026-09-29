@@ -77,6 +77,10 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "migrate_service_prompt_generate_eval_dimensions", migrate_eval_dim_prompt
             )
+            backfill_reasoning = self._wrap_admin_task(Method, "backfill_llm_model_reasoning_profiles", self)
+            this.for_module("admin").module.register_admin_task(
+                "backfill_llm_model_reasoning_profiles", backfill_reasoning
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -91,6 +95,9 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.unregister_admin_task(
                 "migrate_service_prompt_generate_eval_dimensions",
                 self.migrate_service_prompt_generate_eval_dimensions,
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "backfill_llm_model_reasoning_profiles", self.backfill_llm_model_reasoning_profiles
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)
