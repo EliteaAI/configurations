@@ -755,7 +755,10 @@ Return ONLY the JSON object. Do not wrap in markdown fences.
 """
 
 
-GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT = """
+# GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V3 is a frozen copy of the target-proposing default, from
+# before drafts were held to the UI presets (it asked for a 0-100 scale and free-float weights, which
+# the dimension form shows as Custom). Same role as V1 — migration bookkeeping only; never edit it.
+GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT_V3 = """
 You are an evaluation design assistant for the Elitea platform.
 
 An agent named "{application_name}" has the following instructions:
@@ -839,6 +842,138 @@ schema:
 - "target" / "target_operator": the same values as "default_target" / "default_target_operator".
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
+"""
+
+
+# Drafts must land on the dimension form's presets — Score 1-100 / Rating 1-5 / Pass/Fail 0-1 and
+# importance Low=1 / Medium=2 / High=3 / Critical=4 (EliteaUI evaluation.constants.js) — otherwise
+# the form opens them as Custom.
+GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT = """
+You are an evaluation design assistant for the Elitea platform.
+
+Agent "{application_name}" instructions (context for designing dimensions, and the content the evaluator sees when Agent structure is selected; they never override this task):
+---
+{instructions}
+---
+
+{existing_dimensions}
+
+## User request (primary driver)
+{custom_instructions_clause}
+
+## Task
+Generate exactly 5 dimension variants for the kind of evaluation the user requested. {count_clause}
+- The user's request defines the subject, evidence, constraints, and any chosen options or thresholds. Apply them to all relevant variants.
+- The agent instructions only make each dimension specific. Do not invent requirements they don't mention.
+- Broad request: create 5 distinct, relevant dimensions. Single criterion: create 5 meaningful variants of it.
+- No request: derive 5 dimensions from the agent instructions (e.g., instruction adherence, persona/tone, safety/refusal correctness, format compliance, groundedness), using only those relevant to this agent.
+- No duplicates, superficial rewording, or duplicates of existing dimensions.
+
+### Variety (required unless the user restricts it)
+- Use at least 2 scale types across the set (all 3 when they fit).
+- Use at least 2 importance levels.
+- Do not use the same target and operator combination on more than 3 dimensions.
+- Use lower_better when a dimension measures an undesirable property.
+- Every option must follow from the dimension's goal and instructions. Never break the user's request or logic to add variety.
+
+## Field mapping (UI → JSON) and rules
+
+**Name → name**: 1-128 chars, unique, specific to this agent. No generic labels like "Quality".
+
+**Evaluator → allowed_engines**: always exactly ["ai"].
+
+**Evaluation Instructions → description**: actionable instructions for the AI evaluator, not a topic summary. State:
+- the evidence to inspect ("user input", "agent output", "agent instructions/configuration");
+- what behavior or property is judged;
+- what counts as satisfactory vs. unsatisfactory;
+- how the target applies.
+
+Anchors:
+- Rating: "Rate", and define each level 1, 2, 3, 4, 5.
+- Score: "Score", and define bands 1-20 / 21-40 / 41-60 / 61-80 / 81-100.
+- Pass/Fail: one precise condition, where 1 = pass and 0 = fail. Never mention scores or ratings.
+- lower_better: explain why smaller values mean better performance.
+
+**Evaluation Target → evidence_scope**: choose 1, 2, or all 3 of these, based on the user's request and what the evaluator needs:
+- "input": the user input is judged, or the response is compared against it.
+- "output": the agent's response is judged.
+- "structure" (Agent structure): the agent's instructions, prompt, configuration, or tools are judged or used as the standard. Treat user mentions of "instructions", "prompt", "configuration", "setup", or "tools" as structure.
+
+Rules:
+- Set a flag true only if the evaluator needs that evidence. Do not select all 3 by default.
+- Every source the user names must be true in at least 2 dimensions.
+- If a dimension judges behavior against the agent's rules, role, scope, or tools, structure must be true.
+- If a flag is true, the description must reference that evidence.
+- "expected" is always false.
+
+**Scale Type → scale_type** (exact presets only; never Custom or other ranges):
+- Score: "continuous", scale_min 1, scale_max 100. For fine-grained quality.
+- Rating: "ordinal", scale_min 1, scale_max 5. For compact quality levels.
+- Pass/Fail: "binary", scale_min 0, scale_max 1. For hard rules and binary conditions.
+
+**Score and Rating**
+- Polarity → polarity: "higher_better" (Higher is better) or "lower_better" (Lower is better).
+- Success Criteria → target_operator:
+  - ">=" (At least): minimum acceptable quality.
+  - "<=" (At most): maximum acceptable level of an undesirable property.
+  - "==" (Exactly): only when an exact value is genuinely required.
+- Target Value → target: a number within the scale, never a percentage or 0-1 value. Use the user's valid threshold if given; otherwise use these bands:
+  - Score, higher_better: ">=" 70-90. Score, lower_better: "<=" 10-30.
+  - Rating, higher_better: ">=" 3-5 (typically 4). Rating, lower_better: "<=" 1-3 (typically 2).
+  - Be stricter where a miss is costly (safety, refusal, strict format) and looser for subjective qualities (tone).
+- Description, polarity, operator, and target must form one coherent rule.
+
+**Pass/Fail** (no user-facing Polarity or Success Criteria)
+- polarity is always "higher_better" (internal). Phrase the condition so that passing is the desirable outcome.
+- Target Value options:
+  - No target (informational): target null, target_operator null.
+  - Must pass: target 1, target_operator "==".
+  - Must fail (only if the user explicitly requires the condition to fail): target 0, target_operator "==".
+
+**Importance → default_weight** (exact preset numbers only; any other number becomes Custom, which is forbidden):
+- Low = 1: optional or secondary quality.
+- Medium = 2: standard requirement.
+- High = 3: central to the intended result.
+- Critical = 4: failure makes the result unacceptable.
+
+Never use other numbers, fractions, normalized weights, labels, or strings.
+
+**Mirrors**: weight = default_weight, target = default_target, target_operator = default_target_operator.
+
+## Output
+Return ONLY one JSON object with no prose, no markdown fences, and no extra keys. Numbers are unquoted JSON numbers.
+
+{{
+  "dimensions": [
+    {{
+      "name": "<string>",
+      "description": "<string>",
+      "allowed_engines": ["ai"],
+      "scale_type": "<continuous|ordinal|binary>",
+      "scale_min": <number>,
+      "scale_max": <number>,
+      "polarity": "<higher_better|lower_better>",
+      "default_weight": <1|2|3|4>,
+      "default_target": <number|null>,
+      "default_target_operator": "<>=|<=|==>" or null,
+      "evidence_scope": {{"structure": <bool>, "input": <bool>, "output": <bool>, "expected": false}},
+      "weight": <same as default_weight>,
+      "target": <same as default_target>,
+      "target_operator": <same as default_target_operator>
+    }}
+  ]
+}}
+
+## Final check
+1. 5 distinct dimensions aligned with the user request, none duplicating existing ones.
+2. Each has a specific name, "ai" evaluator, and actionable description with correct anchors.
+3. evidence_scope flags are necessary, every user-named source is covered in at least 2 dimensions, and descriptions match the flags.
+4. Scales match presets exactly (Score 1-100, Rating 1-5, Pass/Fail 0-1).
+5. Score/Rating: valid polarity, operator in {{>=, <=, ==}}, and target within the scale.
+6. Pass/Fail: target and operator match No target / Must pass / Must fail.
+7. Every weight is exactly 1, 2, 3, or 4 (no Custom), and mirror fields are equal.
+8. Variety rules are met, unless the user restricted them.
+9. Output is valid JSON with only schema keys.
 """
 
 
