@@ -79,7 +79,7 @@ class Module(module.ModuleModel):
             )
             backfill_reasoning = self._wrap_admin_task(Method, "backfill_llm_model_reasoning_profiles", self)
             this.for_module("admin").module.register_admin_task(
-                "backfill_llm_model_reasoning_profiles", backfill_reasoning
+                "backfill_llm_model_reasoning_profiles", backfill_reasoning, group="R-2.0.7",
             )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
