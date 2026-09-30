@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from .environment_settings import EnvironmentSettings
 from .auto_routing import AutoRoutingProjectSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
+from .llm_model_connection import check_llm_model_connection
 from .project_context import ProjectContext
 from .project_chat_config import ProjectChatConfig
 from .project_icon import ProjectIcon
@@ -130,6 +131,7 @@ def unregister_config_type(type_name: str) -> bool:
     return CONFIG_TYPE_REGISTRY.pop(type_name, None) is not None
 
 
+LlmModel.check_connection = staticmethod(check_llm_model_connection)
 register_config_type(
     type_name='llm_model',
     section='llm',
