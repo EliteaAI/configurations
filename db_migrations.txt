@@ -13,3 +13,11 @@ ALTER TABLE {pid}.configuration ALTER COLUMN elitea_title TYPE VARCHAR;
 # Migration: name_generation_image (str) -> supports_vision (bool) for LLM models
 UPDATE {pid}.configuration SET data = jsonb_set(data, '{{supports_vision}}', 'true'::jsonb) WHERE section = 'llm' AND type = 'llm_model' AND data ? 'name' AND NOT (data ? 'supports_vision');
 UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE section = 'llm' AND type = 'llm_model' AND data ? 'name_generation_image';
+
+# 2.0.6 -> 2.0.7
+
+# LLM models: fill thinking_type / supported_efforts / default_effort from the reasoning profile (#6819).
+# Admin task (Administration -> Tasks), dry run first, then live:
+#   backfill_llm_model_reasoning_profiles  param: project_id=all;dry_run
+#   backfill_llm_model_reasoning_profiles  param: project_id=all
+# Rows whose name family has no reasoning but have reasoning switched on are reported and left for an admin.

@@ -22,11 +22,13 @@ from copy import deepcopy
 
 from pylon.core.tools import log  # pylint: disable=E0611,E0401,W0611
 from pylon.core.tools import web  # pylint: disable=E0611,E0401,W0611
+from sqlalchemy import update
 from sqlalchemy.orm.attributes import flag_modified
 
 from tools import db, VaultClient
 from ..models.configuration import Configuration
 from ..common_utils import get_public_project_id
+from ..llm_model_profiles import reasoning_backfill_patch
 
 
 SYSTEM_SECRET_KEYS = {
@@ -203,6 +205,112 @@ class Method:  # pylint: disable=E1101,R0903,W0201
             prefix, "would migrate" if dry_run else "migrated", total_migrated, round(end_ts - start_ts, 2)
         )
         return {"migrated": total_migrated, "dry_run": dry_run}
+
+    @web.method()
+    def backfill_llm_model_reasoning_profiles(self, *args, **kwargs):
+        """Fill thinking_type / supported_efforts / default_effort on existing LLM models (R-2.0.7, #6819). Param: project_id=<all|N>[;dry_run]
+
+        Every reasoning model row saved before the reasoning profiles existed gets the levels its
+        name profile allows (unrecognized names keep low/medium/high) and a default of medium where
+        the levels allow it, so admins never have to apply profiles by hand. Non-reasoning rows,
+        rows that already carry any of the fields, and rows whose family has no reasoning
+        (for example a GPT-4 name with reasoning switched on) are left untouched and reported.
+
+        Writes leave updated_at alone so Auto routing pins keep their fingerprint.
+        Idempotent: a second run finds every row already configured.
+
+        Param format (required):
+            "project_id=<all|N>[;dry_run]"
+
+        Examples:
+            "project_id=all;dry_run"  - report what would change across all projects
+            "project_id=all"          - backfill all projects
+            "project_id=3"            - backfill project 3 only
+        """
+        param = kwargs.get("param", "") or ""
+        dry_run = False
+        project_id_filter = None
+        project_id_found = False
+
+        for seg in [s.strip() for s in param.split(";")]:
+            seg_lower = seg.lower()
+            if seg_lower.startswith("project_id="):
+                project_id_found = True
+                value = seg[len("project_id="):].strip()
+                if value.lower() != "all":
+                    try:
+                        project_id_filter = int(value)
+                    except ValueError:
+                        log.error("backfill_llm_model_reasoning_profiles: invalid project_id '%s'", value)
+                        return {"backfilled": 0, "error": f"invalid project_id: '{value}'"}
+            elif seg_lower == "dry_run":
+                dry_run = True
+
+        if not project_id_found:
+            log.error("backfill_llm_model_reasoning_profiles: project_id= is required. Format: project_id=<all|N>[;dry_run]")
+            return {"backfilled": 0, "error": "project_id= is required. Format: project_id=<all|N>[;dry_run]"}
+
+        prefix = "[DRY RUN] " if dry_run else ""
+        log.info("Starting backfill_llm_model_reasoning_profiles (dry_run=%s, project_id_filter=%s)", dry_run, project_id_filter)
+        start_ts = time.time()
+
+        try:
+            if project_id_filter is not None:
+                projects = [{"id": project_id_filter}]
+            else:
+                projects = self.context.rpc_manager.call.project_list() or []
+        except Exception:  # pylint: disable=W0703
+            log.exception("backfill_llm_model_reasoning_profiles: failed to list projects")
+            return {"backfilled": 0, "error": "failed to list projects"}
+
+        result = {"backfilled": 0, "skipped": {}, "failed_projects": [], "dry_run": dry_run}
+        for project in projects:
+            project_id = project['id']
+            backfilled = 0
+            skipped = {}
+            try:
+                with db.with_project_schema_session(project_id) as session:
+                    rows = session.query(Configuration).filter(
+                        Configuration.section == 'llm', Configuration.type == 'llm_model'
+                    ).all()
+                    for cfg in rows:
+                        patch, outcome = reasoning_backfill_patch(cfg.data)
+                        if patch is None:
+                            skipped[outcome] = skipped.get(outcome, 0) + 1
+                            if outcome == 'profile_without_reasoning':
+                                log.warning(
+                                    "%sproject %s, model id=%s name=%s: reasoning is on but the family has none; left for the admin",
+                                    prefix, project_id, cfg.id, (cfg.data or {}).get('name')
+                                )
+                            continue
+                        backfilled += 1
+                        log.info(
+                            "%sproject %s, model id=%s name=%s (%s): %s",
+                            prefix, project_id, cfg.id, (cfg.data or {}).get('name'), outcome, patch
+                        )
+                        if not dry_run:
+                            session.execute(
+                                update(Configuration)
+                                .where(Configuration.id == cfg.id)
+                                .values(data={**cfg.data, **patch}, updated_at=Configuration.updated_at)
+                            )
+                    if not dry_run:
+                        session.commit()
+            except Exception:  # pylint: disable=W0703
+                log.exception("%sbackfill_llm_model_reasoning_profiles: error in project %s", prefix, project_id)
+                result["failed_projects"].append(project_id)
+                continue
+            # A project's rows count only once its commit went through
+            result["backfilled"] += backfilled
+            for outcome, count in skipped.items():
+                result["skipped"][outcome] = result["skipped"].get(outcome, 0) + count
+
+        log.info(
+            "%sExiting backfill_llm_model_reasoning_profiles — %s %s model(s), skipped %s, failed projects %s (duration = %ss)",
+            prefix, "would backfill" if dry_run else "backfilled", result["backfilled"], result["skipped"],
+            result["failed_projects"], round(time.time() - start_ts, 2)
+        )
+        return result
 
     @web.method()
     def migrate_service_prompt_generate_eval_dimensions(self, *args, **kwargs):

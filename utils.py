@@ -15,6 +15,7 @@ from .models.pd.configuration import (
 from .models.pd.registry import CONFIG_TYPE_REGISTRY
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
+from .llm_model_profiles import check_llm_model_profile_bounds
 
 
 def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
@@ -103,6 +104,7 @@ def create_configuration(payload: dict) -> Configuration:
         raise handle_validation_error(ve)
     except ValueError as e:
         raise ConfigurationError("payload", str(e))
+    check_llm_model_profile_bounds(parsed.type, parsed.data)
 
     if not parsed._entry.model:
         # Extract data properties from the full config schema
@@ -240,6 +242,7 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                         )
                     except ValidationError as ve:
                         raise handle_validation_error(ve)
+                    check_llm_model_profile_bounds(config.type, update_payload['data'])
                     if config.type == 'llm_model' and 'description' in update_payload['data']:
                         update_payload['data']['description'] = validated.description
 
@@ -490,6 +493,9 @@ def get_configuration_llm_models_with_limits_query(session, project_id: int, fil
             func.coalesce(
                 Configuration.data["api_protocol"].astext, 'azure'
             ).label("api_protocol"),
+            Configuration.data["thinking_type"].astext.label("thinking_type"),
+            Configuration.data["supported_efforts"].label("supported_efforts"),
+            Configuration.data["default_effort"].astext.label("default_effort"),
         )
         .distinct()
         .join(
