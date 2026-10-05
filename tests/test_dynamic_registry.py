@@ -18,6 +18,7 @@ def _load_registry(monkeypatch):
     pd_package.__path__ = [str(PLUGIN_ROOT / "models" / "pd")]
     local_tools = types.ModuleType("configurations.local_tools")
     local_tools.log = types.SimpleNamespace(info=lambda *_: None, error=lambda *_: None)
+    local_tools.rpc_manager = None
 
     monkeypatch.setitem(sys.modules, "configurations", package)
     monkeypatch.setitem(sys.modules, "configurations.models", models)
