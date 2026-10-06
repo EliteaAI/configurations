@@ -21,3 +21,5 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 #   backfill_llm_model_reasoning_profiles  param: project_id=all;dry_run
 #   backfill_llm_model_reasoning_profiles  param: project_id=all
 # Rows whose name family has no reasoning but have reasoning switched on are reported and left for an admin.
+# #6908: environments that already ran it (dev, stage) run it again — configured rows now lose levels
+# their profile rules out (none on gpt-5.1-codex). Same params, dry run first.

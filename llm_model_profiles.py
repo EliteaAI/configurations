@@ -18,7 +18,7 @@ import re
 
 from .exceptions import ConfigurationError
 
-PROFILE_LIST_VERSION = 1
+PROFILE_LIST_VERSION = 2
 
 EFFORT_LEVELS = ('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max')
 THINKING_TYPES = ('adaptive', 'enabled', 'always_on')
@@ -127,6 +127,18 @@ PROFILES = (
         'openai-gpt-5-1-codex-max', 'OpenAI GPT-5.1 Codex Max', ('gpt-5-1-codex-max',),
         supported_efforts=('none', 'low', 'medium', 'high', 'xhigh'), default_effort='medium',
     ),
+    # gpt-5.1-codex rejects none and minimal ("Supported values are: 'low', 'medium', and 'high'",
+    # #6908 probe), so it leaves the GPT-5.1 family. codex-max and codex-mini contain its token but
+    # are unprobed, so they keep their own entries ahead of it with the levels they had before.
+    _profile(
+        'openai-gpt-5-1-codex-mini', 'OpenAI GPT-5.1 Codex Mini', ('gpt-5-1-codex-mini',),
+        supported_efforts=('none', 'low', 'medium', 'high'), default_effort='medium',
+    ),
+    _profile(
+        'openai-gpt-5-1-codex', 'OpenAI GPT-5.1 Codex', ('gpt-5-1-codex',),
+        supported_efforts=('low', 'medium', 'high'), default_effort='medium',
+        notes=('This model does not accept none or minimal.',),
+    ),
     _profile(
         'openai-gpt-5-2-5-1', 'OpenAI GPT-5.2 / GPT-5.1', ('gpt-5-2', 'gpt-5-1'),
         supported_efforts=('none', 'low', 'medium', 'high'), default_effort='medium',
@@ -229,16 +241,19 @@ def reasoning_backfill_patch(data):
 
     Reasoning rows recognized by name take their profile's levels and thinking mode; unrecognized
     reasoning rows are written down as what they already offer (low/medium/high). The default is
-    medium wherever the levels allow it, otherwise the profile's own default. Rows that already
-    carry any of the fields, non-reasoning rows and rows whose family has no reasoning are left
-    for the admin.
+    medium wherever the levels allow it, otherwise the profile's own default. Non-reasoning rows
+    and rows whose family has no reasoning are left for the admin.
+
+    Rows that already carry the fields are only narrowed: levels their recognized profile rules
+    out are dropped (#6908: an earlier run wrote none onto codex rows, which the provider rejects),
+    and the default moves only when its level was dropped. A level the admin removed stays removed.
     """
     data = data if isinstance(data, dict) else {}
     if not data.get('supports_reasoning'):
         return None, 'not_reasoning'
-    if any(data.get(field) is not None for field in CAPABILITY_FIELDS):
-        return None, 'already_configured'
     profile = recognize_profile(data.get('name'))
+    if any(data.get(field) is not None for field in CAPABILITY_FIELDS):
+        return _narrow_to_profile(data, profile)
     if profile is None:
         levels, thinking_type, profile_default, outcome = FALLBACK_SUPPORTED_EFFORTS, None, None, 'unrecognized'
     elif not profile['supports_reasoning']:
@@ -252,3 +267,23 @@ def reasoning_backfill_patch(data):
         'supported_efforts': list(levels),
         'default_effort': default_effort,
     }, outcome
+
+
+def _default_within(levels, stored_default, profile_default):
+    for candidate in (stored_default, BACKFILL_DEFAULT_EFFORT, profile_default):
+        if candidate in levels and candidate != 'none':
+            return candidate
+    return next(level for level in levels if level != 'none')
+
+
+def _narrow_to_profile(data, profile):
+    stored = data.get('supported_efforts') or []
+    if profile is None or not profile['supports_reasoning'] or not stored:
+        return None, 'already_configured'
+    levels = [level for level in stored if level in profile['supported_efforts']] or list(profile['supported_efforts'])
+    if levels == list(stored):
+        return None, 'already_configured'
+    return {
+        'supported_efforts': levels,
+        'default_effort': _default_within(levels, data.get('default_effort'), profile['default_effort']),
+    }, 'narrowed'
