@@ -212,8 +212,9 @@ class Method:  # pylint: disable=E1101,R0903,W0201
 
         Every reasoning model row saved before the reasoning profiles existed gets the levels its
         name profile allows (unrecognized names keep low/medium/high) and a default of medium where
-        the levels allow it, so admins never have to apply profiles by hand. Non-reasoning rows,
-        rows that already carry any of the fields, and rows whose family has no reasoning
+        the levels allow it, so admins never have to apply profiles by hand. Rows that already
+        carry the fields only lose levels their profile rules out (#6908: re-run where an earlier
+        run wrote none onto codex rows). Non-reasoning rows and rows whose family has no reasoning
         (for example a GPT-4 name with reasoning switched on) are left untouched and reported.
 
         Writes leave updated_at alone so Auto routing pins keep their fingerprint.

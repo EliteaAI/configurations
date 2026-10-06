@@ -100,7 +100,12 @@ RECOGNITION = [
     ('gpt-5.4-mini', 'openai-gpt-5-4'),
     ('gpt-5.4-2026-03-05', 'openai-gpt-5-4'),
     ('gpt-5.1-codex-max', 'openai-gpt-5-1-codex-max'),
-    ('gpt-5.1-codex', 'openai-gpt-5-2-5-1'),
+    ('gpt-5.1-codex', 'openai-gpt-5-1-codex'),
+    ('azure/gpt-5.1-codex', 'openai-gpt-5-1-codex'),
+    ('gpt-5.1-codex-2025-11-13', 'openai-gpt-5-1-codex'),
+    ('gpt-5.1-codex-mini', 'openai-gpt-5-1-codex-mini'),
+    ('gpt-5.2-codex', 'openai-gpt-5-2-5-1'),
+    ('gpt-5-codex', 'openai-gpt-5'),
     ('gpt-5.1', 'openai-gpt-5-2-5-1'),
     ('gpt-5.2', 'openai-gpt-5-2-5-1'),
     ('gpt-5', 'openai-gpt-5'),
@@ -138,6 +143,18 @@ def test_every_match_token_reaches_its_own_profile(profiles):
     for profile in profiles.PROFILES:
         for token in profile['match']:
             assert profiles.recognize_profile(token)['id'] == profile['id'], token
+
+
+def test_gpt_5_1_codex_offers_neither_none_nor_minimal(profiles):
+    # #6908: gpt-5.1-codex answers none and minimal with "Supported values are: 'low', 'medium', and 'high'"
+    assert list(profiles.recognize_profile('gpt-5.1-codex')['supported_efforts']) == ['low', 'medium', 'high']
+
+
+def test_unprobed_codex_names_keep_the_levels_they_had(profiles):
+    # only gpt-5.1-codex is proven; the others must resolve exactly as before #6908
+    assert list(profiles.recognize_profile('gpt-5.1-codex-mini')['supported_efforts']) == ['none', 'low', 'medium', 'high']
+    assert list(profiles.recognize_profile('gpt-5.1-codex-max')['supported_efforts']) == [
+        'none', 'low', 'medium', 'high', 'xhigh']
 
 
 def test_profile_ids_are_unique_and_tokens_are_normalized(profiles):
@@ -217,6 +234,8 @@ def test_platform_lock_disappears_when_the_claude_off_path_ships(profiles, monke
     ('openai-gpt-5-5', None, ['none', 'low', 'medium', 'high', 'xhigh'], 'medium'),
     ('openai-gpt-5-4', None, ['none', 'low', 'medium', 'high', 'xhigh'], 'medium'),
     ('openai-gpt-5-1-codex-max', None, ['none', 'low', 'medium', 'high', 'xhigh'], 'medium'),
+    ('openai-gpt-5-1-codex-mini', None, ['none', 'low', 'medium', 'high'], 'medium'),
+    ('openai-gpt-5-1-codex', None, ['low', 'medium', 'high'], 'medium'),
     ('openai-gpt-5-2-5-1', None, ['none', 'low', 'medium', 'high'], 'medium'),
     ('openai-gpt-5-x-chat', None, ['medium'], 'medium'),
     ('openai-gpt-5', None, ['minimal', 'low', 'medium', 'high'], 'medium'),
@@ -234,6 +253,12 @@ def _bound_error(profiles, data):
     with pytest.raises(profiles.ConfigurationError) as caught:
         profiles.check_llm_model_profile_bounds('llm_model', data)
     return caught.value
+
+
+def test_codex_row_offering_none_is_rejected_on_save(profiles):
+    error = _bound_error(profiles, _data(name='gpt-5.1-codex', supported_efforts=['none', 'low', 'medium', 'high'],
+                                         default_effort='medium'))
+    assert error.field == 'supported_efforts' and 'none' in error.message
 
 
 def test_no_reasoning_profile_rejects_supports_reasoning(profiles):
@@ -559,3 +584,57 @@ def test_every_profile_offering_medium_defaults_to_it(profiles):
     for profile in profiles.PROFILES:
         if 'medium' in profile['supported_efforts']:
             assert profile['default_effort'] == 'medium', profile['id']
+
+
+# --- re-run narrows configured rows to the profile (#6908) ---------------------------------
+
+CODEX_STORED = ['none', 'low', 'medium', 'high']
+
+
+@pytest.mark.parametrize('stored,default,outcome,expected', [
+    (CODEX_STORED, 'medium', 'narrowed', {'supported_efforts': ['low', 'medium', 'high'], 'default_effort': 'medium'}),
+    (['none', 'high'], 'high', 'narrowed', {'supported_efforts': ['high'], 'default_effort': 'high'}),
+    (['none', 'minimal'], 'minimal', 'narrowed', {'supported_efforts': ['low', 'medium', 'high'], 'default_effort': 'medium'}),
+    (['low', 'high'], 'high', 'already_configured', None),
+])
+def test_backfill_narrows_a_configured_codex_row_to_its_profile(profiles, LlmModel, stored, default, outcome, expected):
+    row = _data(name='gpt-5.1-codex', supported_efforts=stored, default_effort=default)
+    patch, got = profiles.reasoning_backfill_patch(row)
+    assert (patch, got) == (expected, outcome)
+    if patch:
+        LlmModel.model_validate({**row, **patch})
+        profiles.check_llm_model_profile_bounds('llm_model', {**row, **patch})
+        assert profiles.reasoning_backfill_patch({**row, **patch}) == (None, 'already_configured')
+
+
+def test_backfill_keeps_a_configured_default_whose_level_survives(profiles):
+    row = _data(name='gpt-5.1-codex', supported_efforts=['none', 'low', 'high'], default_effort='high')
+    assert profiles.reasoning_backfill_patch(row) == (
+        {'supported_efforts': ['low', 'high'], 'default_effort': 'high'}, 'narrowed')
+
+
+@pytest.mark.parametrize('row', [
+    _data(name='global.openai.gpt-5.6-terra', supported_efforts=['none', 'low', 'medium', 'high', 'xhigh'],
+          default_effort='medium'),
+    _data(name='global.xai.grok-4.6', supported_efforts=['none', 'max'], default_effort='max'),
+    _data(name='gpt-4-azure', supported_efforts=['low'], default_effort='low'),
+    _data(name='claude-opus-4-6', thinking_type='adaptive'),
+    _data(name='gpt-5.1-codex-mini', supported_efforts=['none', 'low', 'medium', 'high'], default_effort='medium'),
+])
+def test_backfill_leaves_configured_rows_it_has_no_proof_against(profiles, row):
+    assert profiles.reasoning_backfill_patch(row) == (None, 'already_configured')
+
+
+def test_task_rerun_narrows_a_configured_codex_row_and_keeps_updated_at(task_module):
+    session = _FakeSession([
+        _stored(1, name='gpt-5.1-codex', supported_efforts=CODEX_STORED, default_effort='medium'),
+        _stored(2, name='global.openai.gpt-5.6-terra', supported_efforts=['none', 'low', 'medium', 'high', 'xhigh'],
+                default_effort='medium'),
+    ])
+    result = _task(task_module, session)(param='project_id=1')
+    assert result == {'backfilled': 1, 'dry_run': False, 'failed_projects': [], 'skipped': {'already_configured': 1}}
+    compiled = session.executed[0].compile(dialect=postgresql.dialect())
+    assert compiled.params['id_1'] == 1
+    assert compiled.params['data'] == _data(name='gpt-5.1-codex', supported_efforts=['low', 'medium', 'high'],
+                                            default_effort='medium')
+    assert 'updated_at=configuration.updated_at' in str(compiled).replace(' ', '')
