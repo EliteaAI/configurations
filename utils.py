@@ -227,6 +227,7 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
         })
 
         old_elitea_title = config.elitea_title
+        previous_data = dict(config.data or {})
         
         # If data is being updated, handle secret fields
         if 'data' in update_payload:
@@ -312,8 +313,8 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                     log.warning(f"Failed to set tier defaults for updated model: {e}")
 
             result = ConfigurationDetails.model_validate(config).model_dump(mode='json')
-            if config.type in {'auto_routing', 'environment_settings'}:
-                event_manager.fire_event('configuration_updated', result)
+            if 'data' in update_payload or config.type in {'auto_routing', 'environment_settings'}:
+                event_manager.fire_event('configuration_updated', {**result, 'previous_data': previous_data})
             if status_changed:
                 event_manager.fire_event('configuration_status_changed', result)
             new_elitea_title = config.elitea_title
