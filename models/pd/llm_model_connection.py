@@ -65,7 +65,8 @@ def redact_credentials(message, credentials: dict) -> str:
 
 def credential_secrets(credentials: dict) -> list[str]:
     api_base = str(credentials.get('api_base') or '')
-    secrets = [str(credentials.get('api_key') or ''), api_base, urlparse(api_base).hostname or '']
+    # The gateway sends the key without HTTP padding (#6711), so that is what an error can echo
+    secrets = [str(credentials.get('api_key') or '').strip(' \t'), api_base, urlparse(api_base).hostname or '']
     return sorted({secret for secret in secrets if len(secret) > 3}, key=len, reverse=True)
 
 

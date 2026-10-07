@@ -87,3 +87,20 @@ def test_unregister_removes_only_requested_type(monkeypatch):
     assert registry.unregister_config_type("mcp_one") is True
     assert registry.unregister_config_type("mcp_one") is False
     assert "mcp_two" in registry.CONFIG_TYPE_REGISTRY
+
+
+def test_check_connection_keeps_a_success_warning(monkeypatch):
+    from pydantic import BaseModel
+
+    class Credential(BaseModel):
+        @staticmethod
+        def check_connection(data):
+            return data["result"]
+
+    registry = _load_registry(monkeypatch)
+    registry.register_config_type("warned_example", "ai_credentials", model=Credential)
+    entry = registry.CONFIG_TYPE_REGISTRY["warned_example"]
+
+    warned = {"success": True, "message": "ok", "warning": "The api_key has leading/trailing whitespace"}
+    assert entry.check_connection({"result": warned}) == warned
+    assert entry.check_connection({"result": {"success": True, "message": "ok"}}) is None
