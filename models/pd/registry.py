@@ -55,8 +55,8 @@ class ConfigTypeRegistryItem(BaseModel):
                     if result.get('success') is False:
                         # Error case - extract message
                         result = result.get("message")
-                    elif 'tools' in result or 'success' not in result:
-                        # Extended success response (e.g., tools discovery) - preserve the dict
+                    elif 'tools' in result or 'warning' in result or 'success' not in result:
+                        # Extended success response (e.g., tools discovery, non-blocking warning) - preserve the dict
                         pass  # Keep result as-is
                     else:
                         # Simple success
