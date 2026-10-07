@@ -1,18 +1,18 @@
-"""#6713: the azure+reasoning rejection applies to DIAL credentials only.
+"""api_protocol on LlmModel.
 
-The credential type is resolved lazily through the validation context, so the
-lookup must only happen when the model would otherwise be rejected.
+#6713 made it nullable. #6919 dropped the azure+reasoning rejection: azure is DIAL's
+chat/completions route, which is the documented route for Gemini, and reasoning works there.
+The remaining guidance for Claude/GPT on azure is a UI warning only.
 """
 import importlib.util
 from pathlib import Path
-from unittest.mock import MagicMock
 
 import pytest
 from pydantic import ValidationError
 
 ROOT = Path(__file__).resolve().parents[2]
 
-_spec = importlib.util.spec_from_file_location('llm_model_6713', ROOT / 'models/pd/llm_model.py')
+_spec = importlib.util.spec_from_file_location('llm_model_protocol', ROOT / 'models/pd/llm_model.py')
 _module = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_module)
 LlmModel = _module.LlmModel
@@ -21,53 +21,20 @@ CREDS = {'elitea_title': 'dial_creds', 'private': False}
 
 
 def _data(**overrides):
-    return {'name': 'gpt-5.4', 'ai_credentials': CREDS, **overrides}
-
-
-def _context(credential_type):
-    resolver = MagicMock(return_value=credential_type)
-    return {'resolve_ai_credential_type': resolver}, resolver
+    return {'name': 'gemini-3.8-flash', 'ai_credentials': CREDS, **overrides}
 
 
 def test_api_protocol_defaults_to_null():
-    # null means "not chosen" - persisted non-DIAL models no longer carry a meaningless 'azure'
+    # null means "not chosen" - persisted non-DIAL models carry no meaningless 'azure'
     assert LlmModel.model_validate(_data()).api_protocol is None
     assert LlmModel.model_validate(_data()).model_dump()['api_protocol'] is None
 
 
-def test_azure_reasoning_rejected_for_dial_credential():
-    context, resolver = _context('ai_dial')
-    with pytest.raises(ValidationError, match="does not support reasoning"):
-        LlmModel.model_validate(_data(api_protocol='azure', supports_reasoning=True), context=context)
-    resolver.assert_called_once()
-    assert resolver.call_args.args[0].elitea_title == 'dial_creds'
-
-
-@pytest.mark.parametrize('credential_type', ['amazon_bedrock', 'azure_open_ai', 'open_ai', None])
-def test_azure_reasoning_allowed_for_non_dial_or_unresolved_credential(credential_type):
-    # None covers a deleted/inaccessible credential: without proof it is DIAL we do not reject
-    context, _ = _context(credential_type)
-    model = LlmModel.model_validate(_data(api_protocol='azure', supports_reasoning=True), context=context)
-    assert model.api_protocol == 'azure'
-
-
-def test_azure_reasoning_allowed_without_resolver_context():
-    # direct model_validate callers (no context) cannot prove the credential is DIAL
-    assert LlmModel.model_validate(_data(api_protocol='azure', supports_reasoning=True)).supports_reasoning
-
-
-@pytest.mark.parametrize('overrides', [
-    {'api_protocol': 'azure', 'supports_reasoning': False},
-    {'api_protocol': None, 'supports_reasoning': True},
-    {'supports_reasoning': True},
-    {'api_protocol': 'openai', 'supports_reasoning': True},
-    {'api_protocol': 'anthropic', 'supports_reasoning': True},
-])
-def test_resolver_not_called_when_rule_cannot_fire(overrides):
-    # the lookup is a DB hit - it must only run on the azure+reasoning path
-    context, resolver = _context('ai_dial')
-    LlmModel.model_validate(_data(**overrides), context=context)
-    resolver.assert_not_called()
+@pytest.mark.parametrize('api_protocol', ['azure', 'openai', 'anthropic', None])
+def test_reasoning_is_accepted_on_every_protocol(api_protocol):
+    model = LlmModel.model_validate(_data(api_protocol=api_protocol, supports_reasoning=True))
+    assert model.supports_reasoning is True
+    assert model.api_protocol == api_protocol
 
 
 def test_invalid_protocol_still_rejected():

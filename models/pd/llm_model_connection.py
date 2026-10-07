@@ -53,10 +53,7 @@ def validate_as_saved(settings: dict, credential_type: str) -> LlmModel:
     }
     if credential_type == DIAL_CREDENTIAL_TYPE:
         payload['api_protocol'] = settings.get('api_protocol') or DIAL_DEFAULT_API_PROTOCOL
-    return LlmModel.model_validate(
-        payload,
-        context={'resolve_ai_credential_type': lambda _credentials: credential_type},
-    )
+    return LlmModel.model_validate(payload)
 
 
 def redact_credentials(message, credentials: dict) -> str:

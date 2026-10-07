@@ -1,5 +1,3 @@
-from functools import partial
-
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import func, cast, Integer, Boolean, and_, desc, asc
 from sqlalchemy.exc import IntegrityError
@@ -237,10 +235,7 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                 # data is replaced wholesale, so validate it exactly as create does (raw, before secret handling)
                 if config.type != 'service_prompt' and entry.model and hasattr(entry.model, 'model_validate'):
                     try:
-                        validated = entry.model.model_validate(
-                            update_payload['data'],
-                            context=ai_credential_type_context(project_id, config.author_id),
-                        )
+                        validated = entry.model.model_validate(update_payload['data'])
                     except ValidationError as ve:
                         raise handle_validation_error(ve)
                     check_llm_model_profile_bounds(config.type, update_payload['data'])
@@ -336,38 +331,6 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
             else:
                 log.error(f"IntegrityError during configuration update: {str(ie)}")
                 raise ConfigurationError("database", "Database error")
-
-
-def get_ai_credential_type(ai_credentials, project_id: int, user_id: int = None) -> str | None:
-    """ Type of a referenced credential, resolved like expand_configuration but without loading its data """
-    if isinstance(ai_credentials, dict):
-        title, private = ai_credentials.get('elitea_title'), ai_credentials.get('private')
-    else:
-        title, private = getattr(ai_credentials, 'elitea_title', None), getattr(ai_credentials, 'private', None)
-    if not title:
-        return None
-    try:
-        if private:
-            if user_id is None:
-                return None
-            project_id = get_personal_project_id(user_id)
-        with db.get_session(project_id) as session:
-            config_type = session.query(Configuration.type).filter_by(elitea_title=title).scalar()
-        public_project_id = get_public_project_id()
-        if config_type is None and public_project_id and project_id != public_project_id:
-            with db.get_session(public_project_id) as session:
-                config_type = session.query(Configuration.type).filter_by(
-                    elitea_title=title, shared=True
-                ).scalar()
-        return config_type
-    except Exception:
-        log.exception("Failed to resolve ai_credentials type")
-        return None
-
-
-def ai_credential_type_context(project_id: int, user_id: int = None) -> dict:
-    """ Validation context for models whose rules depend on the referenced credential type """
-    return {'resolve_ai_credential_type': partial(get_ai_credential_type, project_id=project_id, user_id=user_id)}
 
 
 def expand_configuration(payload: dict, current_project_id: int, user_id: int = None,

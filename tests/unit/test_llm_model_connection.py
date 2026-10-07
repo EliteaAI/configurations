@@ -102,18 +102,10 @@ def connection(monkeypatch, rpc):
     return _load(monkeypatch, "llm_model_connection", rpc)
 
 
-@pytest.mark.parametrize("api_protocol", ["azure", None, ""])
-def test_dial_azure_or_unset_protocol_with_reasoning_is_rejected_before_the_gateway(connection, rpc, api_protocol):
-    result = connection.check_llm_model_connection(
-        _settings("ai_dial", supports_reasoning=True, api_protocol=api_protocol),
-    )
-    assert result["success"] is False
-    assert "api_protocol='azure' does not support reasoning" in result["message"]
-    assert rpc.calls == []
+@pytest.mark.parametrize("api_protocol", ["azure", None, "", "openai", "anthropic"])
+def test_dial_reasoning_reaches_the_gateway_on_every_protocol(connection, rpc, api_protocol):
+    # #6919: azure is DIAL's route for Gemini, where reasoning works, so no protocol blocks it
 
-
-@pytest.mark.parametrize("api_protocol", ["openai", "anthropic"])
-def test_dial_reasoning_on_a_supporting_protocol_reaches_the_gateway(connection, rpc, api_protocol):
     connection.check_llm_model_connection(_settings("ai_dial", supports_reasoning=True, api_protocol=api_protocol))
     assert len(rpc.calls) == 1
 
