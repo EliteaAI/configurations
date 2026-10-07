@@ -48,7 +48,7 @@ class LlmModel(BaseModel):
         default=None,
         description=(
             "Upstream API protocol to route this model through (DIAL credentials only; unset means 'azure'). "
-            "'azure' suits most models; "
+            "'azure' suits most models, including Gemini with reasoning; "
             "'anthropic' is required for Claude thinking/reasoning effort; "
             "'openai' targets the OpenAI Responses API and is not supported for Claude models"
         )
@@ -130,19 +130,6 @@ class LlmModel(BaseModel):
         if value not in supported:
             raise ValueError(f"must be one of supported_efforts: {', '.join(supported)}")
         return value
-
-    @model_validator(mode='after')
-    def validate_reasoning_protocol(self, info: ValidationInfo):
-        # DIAL's azure-shaped route rejects the thinking field; credential type is resolved only when needed
-        if self.api_protocol == 'azure' and self.supports_reasoning:
-            resolve_credential_type = (info.context or {}).get('resolve_ai_credential_type')
-            if not resolve_credential_type or resolve_credential_type(self.ai_credentials) != 'ai_dial':
-                return self
-            raise ValueError(
-                "api_protocol='azure' does not support reasoning; "
-                "use 'anthropic' or 'openai' when 'Supports Reasoning' is enabled"
-            )
-        return self
 
 
 class EmbeddingModel(BaseModel):
