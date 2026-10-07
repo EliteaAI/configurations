@@ -180,3 +180,8 @@ def test_the_registry_never_marks_other_model_types_testable(monkeypatch):
     registry = _load(monkeypatch, "registry", FakeConnectionRpc())
     for type_name in ("embedding_model", "image_generation_model", "asr_model"):
         assert not hasattr(registry.CONFIG_TYPE_REGISTRY[type_name].model, "check_connection")
+
+
+def test_a_padded_key_is_still_redacted_from_gateway_errors(monkeypatch):
+    connection = _load(monkeypatch, "llm_model_connection", FakeConnectionRpc())
+    assert "live-secret-key-123" in connection.credential_secrets({"api_key": "live-secret-key-123 \t"})
