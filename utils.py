@@ -460,6 +460,7 @@ def get_configuration_llm_models_with_limits_query(session, project_id: int, fil
             Configuration.data["thinking_type"].astext.label("thinking_type"),
             Configuration.data["supported_efforts"].label("supported_efforts"),
             Configuration.data["default_effort"].astext.label("default_effort"),
+            Configuration.data["canonical_model"].astext.label("canonical_model"),
         )
         .distinct()
         .join(
