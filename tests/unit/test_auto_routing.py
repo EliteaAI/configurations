@@ -146,6 +146,7 @@ def test_current_settings_read_uses_platform_and_exact_project_record(modules, m
         calls.append((project, filters))
         return records[project]
     monkeypatch.setattr(modules.settings, 'get_project_configuration', read)
+    monkeypatch.setattr(modules.settings, '_project_secrets', lambda project: {})
     before = modules.settings.get_effective_settings(7)
     assert before['enabled'] is True
     assert calls == [(1, {'type': 'environment_settings', 'elitea_title': 'environment_settings'}),

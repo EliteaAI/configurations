@@ -26,7 +26,7 @@ def item(name, project_id=PUBLIC, *, available=True, shared=True, kind='chat', l
 @pytest.fixture
 def env(monkeypatch):
     state = types.SimpleNamespace(actor=42, project_admin=True, platform_admin=True, records={}, inventory={},
-                                  inventory_calls=[], inventory_error=None)
+                                  inventory_calls=[], inventory_error=None, secrets={})
 
     def get_routing_models(project_id, user_id):
         state.inventory_calls.append((project_id, user_id))
@@ -56,6 +56,7 @@ def env(monkeypatch):
     loaded = {name: importlib.import_module(f'{PACKAGE}.{name}') for name in (
         'exceptions', 'models.pd.auto_routing', 'models.pd.environment_settings', 'routing_settings',
         'routing_readiness', 'routing_access', 'methods.routing', 'rpc.routing')}
+    monkeypatch.setattr(loaded['routing_settings'], '_project_secrets', lambda project: state.secrets.get(project, {}))
     monkeypatch.setattr(loaded['routing_access'], 'is_platform_admin', lambda actor: state.platform_admin and actor == 42)
     monkeypatch.setattr(loaded['methods.routing'], 'is_platform_admin', lambda actor: state.platform_admin and actor == 42)
     yield types.SimpleNamespace(state=state, error=loaded['exceptions'].ConfigurationError,
@@ -89,129 +90,158 @@ def test_classifier_ref_is_strict(env, value):
         env.environment(auto_routing_classifier=value)
 
 
-# --- effective resolution -----------------------------------------------------------------
+# --- effective resolution (#6826 A1) -----------------------------------------------------
 
-def _effective(env, platform=None, project=None):
+LOW = {'name': 'team-small', 'project_id': 7}
+LOW_SECRETS = {'default_llm_low_tier_model_name': 'team-small', 'default_llm_low_tier_model_project_id': '7'}
+
+
+def _effective(env, platform=None, project=None, low_tier=None, items=None):
     environment = {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
                             'auto_routing_classifier': platform}}
-    return env.settings.effective_settings(environment, {'data': {'classifier': project}})
+    return env.settings.effective_settings(environment, {'data': {'classifier': project}}, low_tier, items)
 
 
-def test_project_classifier_wins_over_platform(env):
-    assert _effective(env, LUNA, HAIKU)['classifier'] == {**HAIKU, 'source': 'project'}
-
-
-def test_platform_classifier_is_inherited(env):
-    assert _effective(env, LUNA, None)['classifier'] == {**LUNA, 'source': 'platform'}
-
-
-def test_no_classifier_anywhere(env):
+def test_unchecked_order_is_project_then_low_tier_then_platform(env):
+    assert _effective(env, LUNA, HAIKU, LOW)['classifier'] == {**HAIKU, 'source': 'project'}
+    assert _effective(env, LUNA, None, LOW)['classifier'] == {**LOW, 'source': 'project_low_tier'}
+    assert _effective(env, LUNA, None, None)['classifier'] == {**LUNA, 'source': 'platform'}
     assert _effective(env)['classifier'] is None
 
 
-def test_malformed_project_classifier_falls_back_to_platform(env):
-    assert _effective(env, LUNA, {'name': 'x', 'project_id': 'one'})['classifier']['source'] == 'platform'
+def test_each_level_is_used_only_when_available_chat(env):
+    items = [item('claude-haiku-4-5', project_id=7, available=False), item('team-small', project_id=7),
+             item('gpt-5.6-luna')]
+    assert _effective(env, LUNA, HAIKU, LOW, items)['classifier'] == {**LOW, 'source': 'project_low_tier'}
+    items[1] = item('team-small', project_id=7, kind='embedding')
+    assert _effective(env, LUNA, HAIKU, LOW, items)['classifier'] == {**LUNA, 'source': 'platform'}
+    assert _effective(env, LUNA, HAIKU, LOW, [])['classifier'] is None
+
+
+def test_malformed_levels_are_skipped(env):
+    assert _effective(env, LUNA, {'name': 'x', 'project_id': 'one'}, {'name': ''})['classifier']['source'] == 'platform'
     assert _effective(env, {'name': ''}, None)['classifier'] is None
 
 
-def test_revision_covers_classifier(env):
-    revisions = {_effective(env, LUNA, None)['revision'], _effective(env, LUNA, HAIKU)['revision'],
-                 _effective(env, None, None)['revision']}
-    assert len(revisions) == 3
+@pytest.mark.parametrize('secrets,expected', [
+    (LOW_SECRETS, LOW), ({**LOW_SECRETS, 'default_llm_low_tier_model_project_id': 7}, LOW),
+    ({'default_llm_low_tier_model_name': 'team-small'}, None), ({}, None), (None, None),
+    ({**LOW_SECRETS, 'default_llm_low_tier_model_project_id': 'seven'}, None),
+])
+def test_low_tier_ref_from_vault_keys(env, secrets, expected):
+    assert env.settings.low_tier_ref(secrets) == expected
 
 
-def test_settings_rpc_returns_classifier(env):
+def test_revision_covers_resolved_classifier(env):
+    items = [item('team-small', project_id=7), item('gpt-5.6-luna')]
+    revisions = {_effective(env, LUNA, None, LOW, items)['revision'],
+                 _effective(env, LUNA, None, LOW, items[1:])['revision'],
+                 _effective(env, LUNA, HAIKU)['revision'], _effective(env)['revision']}
+    assert len(revisions) == 4
+
+
+def test_settings_rpc_resolves_for_actor_when_given(env):
     env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA}},
                          7: {'data': {'enabled': True}}}
-    assert env.settings.get_effective_settings(7)['classifier'] == {**LUNA, 'source': 'platform'}
+    env.state.secrets = {7: LOW_SECRETS}
+    assert env.settings.get_effective_settings(7)['classifier'] == {**LOW, 'source': 'project_low_tier'}
+    assert env.state.inventory_calls == []
+    env.state.inventory = {7: [item('gpt-5.6-luna')]}
+    assert env.rpc.configurations_get_auto_routing_settings(7, 42)['classifier'] == {**LUNA, 'source': 'platform'}
+    assert env.state.inventory_calls == [(7, 42)]
 
 
 # --- readiness ----------------------------------------------------------------------------
 
-def _settings(enabled=True, classifier=None, platform=None):
-    return {'enabled': enabled, 'classifier': classifier,
-            'platform_classifier': platform and {**platform, 'source': 'platform'}}
+def _state(env, *, enabled=True, project=None, low_tier=None, platform=None, inventory=()):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_project_default': enabled,
+                                           'auto_routing_classifier': platform}},
+                         7: {'data': {'classifier': project}}}
+    env.state.secrets = {7: low_tier or {}}
+    env.state.inventory = {7: list(inventory)}
+    return env.readiness.get_auto_routing_readiness(7, 42)
 
 
-def test_ready_with_available_chat_classifier(env):
-    env.state.inventory = {7: [item('gpt-5.6-luna', display_name='GPT 5.6 Luna')]}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(classifier={**LUNA, 'source': 'platform'}, platform=LUNA))
-    assert result == {'ready': True, 'reasons': [], 'classifier': {
-        **LUNA, 'display_name': 'GPT 5.6 Luna', 'source': 'platform', 'available': True},
-        'platform_classifier': {**LUNA, 'display_name': 'GPT 5.6 Luna'}}
-    assert env.state.inventory_calls == [(7, 42)]
+def test_ready_with_low_tier_default(env):
+    result = _state(env, low_tier=LOW_SECRETS, platform=LUNA,
+                    inventory=[item('team-small', project_id=7, display_name='Team small'), item('gpt-5.6-luna')])
+    assert result == {'ready': True, 'reasons': [],
+        'classifier': {**LOW, 'display_name': 'Team small', 'source': 'project_low_tier', 'available': True},
+        'default_classifier': {**LOW, 'display_name': 'Team small', 'source': 'project_low_tier'}}
 
 
-def test_not_configured_does_not_read_inventory(env):
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings())
-    assert result == {'ready': False, 'classifier': None, 'platform_classifier': None, 'reasons': [
+def test_explicit_classifier_still_reports_default(env):
+    result = _state(env, project=HAIKU, platform=LUNA,
+                    inventory=[item('claude-haiku-4-5', project_id=7, display_name='Haiku'), item('gpt-5.6-luna', display_name='Luna')])
+    assert result['ready'] is True and result['classifier']['source'] == 'project'
+    assert result['default_classifier'] == {**LUNA, 'display_name': 'Luna', 'source': 'platform'}
+
+
+def test_unavailable_low_tier_falls_through_to_platform(env):
+    result = _state(env, low_tier=LOW_SECRETS, platform=LUNA,
+                    inventory=[item('team-small', project_id=7, available=False), item('gpt-5.6-luna')])
+    assert result['ready'] is True and result['reasons'] == []
+    assert result['classifier']['source'] == 'platform'
+    assert result['default_classifier']['source'] == 'platform'
+
+
+def test_nothing_set_is_not_configured_without_inventory_read(env):
+    result = _state(env)
+    assert result == {'ready': False, 'classifier': None, 'default_classifier': None, 'reasons': [
         {'code': 'CLASSIFIER_NOT_CONFIGURED', 'message': 'No Auto classifier model is configured'}]}
     assert env.state.inventory_calls == []
 
 
-def test_disabled_auto_is_reported_with_classifier_state(env):
-    env.state.inventory = {7: [item('gpt-5.6-luna')]}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(False, {**LUNA, 'source': 'project'}))
-    assert result['ready'] is False
-    assert [reason['code'] for reason in result['reasons']] == ['AUTO_DISABLED']
-
-
 @pytest.mark.parametrize('inventory,code', [
     ([], 'CLASSIFIER_UNAVAILABLE'),
-    ([item('gpt-5.6-luna', available=False)], 'CLASSIFIER_UNAVAILABLE'),
-    ([item('gpt-5.6-luna', project_id=7)], 'CLASSIFIER_UNAVAILABLE'),
-    ([item('gpt-5.6-luna', kind='embedding')], 'CLASSIFIER_NOT_CHAT'),
-    ([{**item('gpt-5.6-luna'), 'identity': None}], 'CLASSIFIER_NOT_CHAT'),
+    ([item('claude-haiku-4-5', project_id=7, available=False)], 'CLASSIFIER_UNAVAILABLE'),
+    ([item('claude-haiku-4-5', project_id=8)], 'CLASSIFIER_UNAVAILABLE'),
+    ([item('claude-haiku-4-5', project_id=7, kind='embedding')], 'CLASSIFIER_NOT_CHAT'),
+    ([{**item('claude-haiku-4-5', project_id=7), 'identity': None}], 'CLASSIFIER_NOT_CHAT'),
 ])
-def test_classifier_problems_are_reason_coded(env, inventory, code):
-    env.state.inventory = {7: inventory}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(classifier={**LUNA, 'source': 'platform'}))
+def test_set_but_unusable_reports_highest_priority_ref(env, inventory, code):
+    result = _state(env, project=HAIKU, low_tier=LOW_SECRETS, platform=LUNA, inventory=inventory)
     assert result['ready'] is False
-    assert [(reason['code'], reason['model']) for reason in result['reasons']] == [(code, LUNA)]
-    assert 'gpt-5.6-luna' in result['reasons'][0]['message']
+    assert [(reason['code'], reason['model']) for reason in result['reasons']] == [(code, HAIKU)]
+    assert 'claude-haiku-4-5' in result['reasons'][0]['message']
+    assert result['classifier'] == {**HAIKU, 'display_name': result['classifier']['display_name'],
+                                    'source': 'project', 'available': False}
+    assert result['default_classifier'] is None
+
+
+def test_unavailable_message(env):
+    result = _state(env, platform=LUNA, inventory=[item('gpt-5.6-luna', available=False)])
+    assert result['reasons'] == [{'code': 'CLASSIFIER_UNAVAILABLE', 'model': LUNA,
+        'message': 'Classifier model gpt-5.6-luna is no longer available to this project'}]
     assert result['classifier']['source'] == 'platform'
 
 
-def test_platform_classifier_is_reported_when_project_overrides(env):
-    env.state.inventory = {7: [item('claude-haiku-4-5', project_id=7, display_name='Haiku'),
-                               item('gpt-5.6-luna', display_name='Luna')]}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(
-        classifier={**HAIKU, 'source': 'project'}, platform=LUNA))
-    assert result['ready'] is True and result['classifier']['source'] == 'project'
-    assert result['platform_classifier'] == {**LUNA, 'display_name': 'Luna'}
-    env.state.inventory = {7: [item('claude-haiku-4-5', project_id=7)]}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(
-        classifier={**HAIKU, 'source': 'project'}, platform=LUNA))
-    assert result['platform_classifier'] == {**LUNA, 'display_name': 'gpt-5.6-luna'}
-
-
-def test_settings_expose_platform_classifier_outside_revision(env):
-    with_project = _effective(env, LUNA, HAIKU)
-    assert with_project['platform_classifier'] == {**LUNA, 'source': 'platform'}
-    assert _effective(env, None, HAIKU)['revision'] == with_project['revision']
-    assert _effective(env)['platform_classifier'] is None
-
-
-def test_unavailable_message_and_flag(env):
-    env.state.inventory = {7: [item('gpt-5.6-luna', available=False)]}
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(classifier={**LUNA, 'source': 'platform'}))
-    assert result['reasons'][0]['message'] == 'Classifier model gpt-5.6-luna is no longer available to this project'
-    assert result['classifier']['available'] is False
+def test_disabled_auto_is_reported_alone_when_classifier_resolves(env):
+    result = _state(env, enabled=False, platform=LUNA, inventory=[item('gpt-5.6-luna')])
+    assert result['ready'] is False
+    assert [reason['code'] for reason in result['reasons']] == ['AUTO_DISABLED']
+    assert result['classifier']['available'] is True
 
 
 def test_unreadable_inventory_fails_closed(env):
     env.state.inventory_error = RuntimeError('visibility unavailable')
-    result = env.readiness.get_auto_routing_readiness(7, 42, settings=_settings(classifier={**LUNA, 'source': 'platform'}))
-    assert [reason['code'] for reason in result['reasons']] == ['CLASSIFIER_UNAVAILABLE']
+    result = _state(env, low_tier=LOW_SECRETS, platform=LUNA)
+    assert [(reason['code'], reason['model']) for reason in result['reasons']] == [('CLASSIFIER_UNAVAILABLE', LOW)]
 
 
-def test_readiness_rpc_reads_current_settings(env):
+def test_missing_actor_fails_closed(env):
     env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
                                            'auto_routing_classifier': LUNA}}}
-    env.state.inventory = {7: [item('gpt-5.6-luna')]}
+    env.state.inventory_error = ValueError('Routing inventory requires a trusted project and user ID')
+    result = env.readiness.get_auto_routing_readiness(7, None)
+    assert result['ready'] is False and result['reasons'][0]['code'] == 'CLASSIFIER_UNAVAILABLE'
+
+
+def test_readiness_rpc(env):
+    _state(env, platform=LUNA, inventory=[item('gpt-5.6-luna')])
     result = env.rpc.configurations_get_auto_routing_readiness(7, 42)
     assert result['ready'] is True
-    assert result['platform_classifier'] == {**LUNA, 'display_name': 'GPT-5.6-LUNA'}
+    assert result['default_classifier'] == {**LUNA, 'display_name': 'GPT-5.6-LUNA', 'source': 'platform'}
 
 
 # --- project write validation -------------------------------------------------------------

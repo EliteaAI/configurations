@@ -6,8 +6,9 @@ from ..routing_settings import get_effective_settings
 
 class RPC:
     @web.rpc('configurations_get_auto_routing_settings')
-    def configurations_get_auto_routing_settings(self, project_id: int):
-        return get_effective_settings(project_id)
+    def configurations_get_auto_routing_settings(self, project_id: int, user_id: int | None = None):
+        # With user_id the classifier is the first level available to that actor (#6826 A1).
+        return get_effective_settings(project_id, user_id)
 
     @web.rpc('configurations_get_auto_routing_readiness')
     def configurations_get_auto_routing_readiness(self, project_id: int, user_id: int):

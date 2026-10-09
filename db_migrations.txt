@@ -29,5 +29,7 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # Auto classifier setting and model identity (#6826): no migration. New optional JSONB fields default to
 # null: auto_routing.data.classifier, environment_settings.data.auto_routing_classifier and
 # llm_model.data.canonical_model. Model identity is derived on read and never stored.
-# After deploy, Admin -> Features -> Auto Model Selection: pick the platform classifier (a shared, fast model);
-# until one is set, Auto readiness reports CLASSIFIER_NOT_CONFIGURED.
+# Classifier resolution: project classifier -> project Low-tier model (AI Providers -> LLMs) -> platform
+# fallback classifier. Projects with an available Low-tier model keep working on deploy without admin action.
+# For the others, set a fallback in Admin -> Features -> Auto Model Selection (a shared, fast model); until a
+# level resolves, Auto readiness reports CLASSIFIER_NOT_CONFIGURED (nothing set) or CLASSIFIER_UNAVAILABLE.
