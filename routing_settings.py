@@ -68,6 +68,20 @@ def resolve_classifier(refs, items=None):
     return None
 
 
+def classifier_reason(resolved, refs, items):
+    """None when a classifier resolved; otherwise the reason for the highest-priority configured level."""
+    if resolved:
+        return None
+    if not refs:
+        return {'code': 'CLASSIFIER_NOT_CONFIGURED', 'message': 'No Auto classifier model is configured',
+                'model': None}
+    ref = refs[0][1]
+    code = classifier_problem(find_model(items or [], ref))
+    message = (f"Classifier model {ref['name']} is not a chat model" if code == 'CLASSIFIER_NOT_CHAT'
+               else f"Classifier model {ref['name']} is no longer available to this project")
+    return {'code': code, 'message': message, 'model': dict(ref)}
+
+
 def effective_settings(environment, project, low_tier=None, items=None):
     """Only literal booleans grant availability; malformed records fail closed.
 
@@ -85,8 +99,11 @@ def effective_settings(environment, project, low_tier=None, items=None):
         fields['project_override'] = False
     fields['enabled'] = routing_enabled(env_data, project_data)
     # Project classifier, else project Low-tier model, else platform classifier (#6826 A1); covered by revision.
-    fields['classifier'] = resolve_classifier(classifier_refs(env_data, project_data, low_tier), items)
+    refs = classifier_refs(env_data, project_data, low_tier)
+    fields['classifier'] = resolve_classifier(refs, items)
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+    # Why no classifier resolved; derived from the resolution above, so not part of revision.
+    fields['classifier_reason'] = classifier_reason(fields['classifier'], refs, items)
     return fields
 
 

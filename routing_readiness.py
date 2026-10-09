@@ -4,7 +4,9 @@ Enablement (policy) stays in routing_settings; readiness says whether the effect
 classifier is a deployment this actor can use. Pickers offer Auto only when both hold.
 """
 from .llm_model_identity import is_low_tier
-from .routing_settings import classifier_problem, find_model, get_classifier_state, resolve_classifier
+from .routing_settings import (
+    classifier_problem, classifier_reason, find_model, get_classifier_state, resolve_classifier,
+)
 
 
 def usable_classifiers(items, *, shared_only=False):
@@ -35,18 +37,16 @@ def readiness(settings, refs, items):
     if settings.get('enabled') is not True:
         reasons.append({'code': 'AUTO_DISABLED', 'message': 'Auto model selection is disabled for this project'})
     used = settings.get('classifier')
+    reason = classifier_reason(used, refs, items)
+    if reason:
+        reasons.append(reason)
     if used:
         classifier = {**_described(used, items), 'available': True}
-    elif not refs:
-        classifier = None
-        reasons.append({'code': 'CLASSIFIER_NOT_CONFIGURED', 'message': 'No Auto classifier model is configured'})
-    else:
+    elif refs:
         source, ref = refs[0]
-        code = classifier_problem(find_model(items, ref))
-        message = (f"Classifier model {ref['name']} is not a chat model" if code == 'CLASSIFIER_NOT_CHAT'
-                   else f"Classifier model {ref['name']} is no longer available to this project")
-        reasons.append({'code': code, 'message': message, 'model': dict(ref)})
         classifier = {**_described({**ref, 'source': source}, items), 'available': False}
+    else:
+        classifier = None
     return {'ready': not reasons, 'reasons': reasons, 'classifier': classifier,
             'default_classifier': default and _described(default, items)}
 

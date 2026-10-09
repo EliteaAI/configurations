@@ -151,6 +151,31 @@ def test_settings_rpc_resolves_for_actor_when_given(env):
     assert env.state.inventory_calls == [(7, 42)]
 
 
+def test_settings_rpc_reports_classifier_reason(env):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True}}, 7: {'data': {'enabled': True}}}
+    result = env.rpc.configurations_get_auto_routing_settings(7, 42)
+    assert result['classifier'] is None
+    assert result['classifier_reason'] == {'code': 'CLASSIFIER_NOT_CONFIGURED',
+                                           'message': 'No Auto classifier model is configured', 'model': None}
+    env.state.records[7]['data']['classifier'] = HAIKU
+    env.state.inventory = {7: [item('claude-haiku-4-5', project_id=7, available=False)]}
+    result = env.rpc.configurations_get_auto_routing_settings(7, 42)
+    assert result['classifier'] is None
+    assert result['classifier_reason'] == {'code': 'CLASSIFIER_UNAVAILABLE', 'model': HAIKU,
+        'message': 'Classifier model claude-haiku-4-5 is no longer available to this project'}
+    assert result['classifier_reason'] == _state(env, project=HAIKU, inventory=env.state.inventory[7])['reasons'][0]
+    env.state.records[7]['data']['classifier'] = HAIKU
+    env.state.inventory = {7: [item('claude-haiku-4-5', project_id=7)]}
+    assert env.rpc.configurations_get_auto_routing_settings(7, 42)['classifier_reason'] is None
+
+
+def test_classifier_reason_does_not_enter_revision(env):
+    unavailable = _effective(env, None, HAIKU, None, [item('claude-haiku-4-5', project_id=7, available=False)])
+    not_chat = _effective(env, None, HAIKU, None, [item('claude-haiku-4-5', project_id=7, kind='image')])
+    assert unavailable['classifier_reason']['code'] != not_chat['classifier_reason']['code']
+    assert unavailable['revision'] == not_chat['revision']
+
+
 # --- readiness ----------------------------------------------------------------------------
 
 def _state(env, *, enabled=True, project=None, low_tier=None, platform=None, inventory=()):
@@ -188,7 +213,7 @@ def test_unavailable_low_tier_falls_through_to_platform(env):
 def test_nothing_set_is_not_configured_without_inventory_read(env):
     result = _state(env)
     assert result == {'ready': False, 'classifier': None, 'default_classifier': None, 'reasons': [
-        {'code': 'CLASSIFIER_NOT_CONFIGURED', 'message': 'No Auto classifier model is configured'}]}
+        {'code': 'CLASSIFIER_NOT_CONFIGURED', 'message': 'No Auto classifier model is configured', 'model': None}]}
     assert env.state.inventory_calls == []
 
 
