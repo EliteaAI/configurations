@@ -88,7 +88,7 @@ def test_project_control_owners(modules, monkeypatch, project_admin, personal_ow
     monkeypatch.setattr(modules.guard, 'is_project_admin', lambda p, u: p == 7 and u == 42 and project_admin)
     monkeypatch.setattr(modules.guard, 'is_own_personal_project', lambda p, u: p == 7 and u == 42 and personal_owner)
     result = modules.guard.validate_routing_write('auto_routing', 7, {'data': {'enabled': True}})
-    assert result['data'] == {'enabled': True}
+    assert result['data'] == {'enabled': True, 'classifier': None}
     with pytest.raises(modules.error):
         modules.guard.validate_routing_write('auto_routing', 8, {'data': {'enabled': True}})
 
@@ -183,11 +183,13 @@ def test_administration_method_preserves_environment_and_requires_actual_admin()
     namespace = {'web': types.SimpleNamespace(method=lambda: lambda f: f),
         'current_actor_id': lambda: 42, 'is_platform_admin': lambda actor: actor == 42,
         'get_public_project_id': lambda: 1, 'get_project_configuration': lambda *a: record,
-        'update_configuration': lambda project, ident, data: writes.append((project, ident, data)) or {'id': ident, **data}}
+        'update_configuration': lambda project, ident, data: writes.append((project, ident, data)) or {'id': ident, **data},
+        'get_routing_models': lambda project, actor: {'items': []}, 'classifier_options': lambda items: []}
     exec(compile(tree, str(source), 'exec'), namespace)
     method = namespace['Method']()
     actual = method.auto_routing_platform_settings({'available': True, 'project_default': False})
-    assert actual == {'available': True, 'project_default': False, 'can_manage': True}
+    assert actual == {'available': True, 'project_default': False, 'classifier': None,
+                      'classifier_options': [], 'can_manage': True}
     assert writes[0] == (1, 9, {'data': {'system_sender_name': 'Company', 'auto_routing_available': True, 'auto_routing_project_default': False}})
     namespace['is_platform_admin'] = lambda *a: False
     with pytest.raises(PermissionError):

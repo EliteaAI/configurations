@@ -232,3 +232,24 @@ def test_folder_lookup_failure_propagates(inventory, monkeypatch):
     with pytest.raises(RuntimeError, match='visibility unavailable'):
         inventory.module.get_routing_models(7, 42)
     assert inventory.db.sessions == []
+
+
+def test_inventory_items_carry_identity_from_scalar_columns(inventory):
+    """#6826: identity comes from name, api_protocol and canonical_model columns, never the data blob."""
+    inventory.db.rows = [row(1, 7, name='gpt-5.6-luna-2026-07-09'),
+                         row(2, 7, name='team-router', canonical_model='anthropic/claude-haiku-4-5'),
+                         row(3, 7, name='house-model', api_protocol='anthropic')]
+    items = {item['name']: item for item in inventory.module.get_routing_models(7, 42)['items']}
+    assert items['gpt-5.6-luna-2026-07-09']['identity']['canonical'] == 'openai/gpt-5-6-luna'
+    assert (items['team-router']['identity']['canonical'], items['team-router']['identity']['source']) == (
+        'anthropic/claude-haiku-4-5', 'explicit')
+    assert items['house-model']['identity']['canonical'] == 'anthropic/house-model'
+    assert all({'api_protocol', 'canonical_model'} <= set(fields) and 'data' not in fields
+               for fields in inventory.db.columns)
+
+
+def test_canonical_override_changes_fingerprint(inventory):
+    inventory.db.rows = [row(1, 7, name='team-router')]
+    before = inventory.module.get_routing_models(7, 42)['items'][0]['configuration_fingerprint']
+    inventory.db.rows[0]['data']['canonical_model'] = 'openai/gpt-5-6-luna'
+    assert inventory.module.get_routing_models(7, 42)['items'][0]['configuration_fingerprint'] != before

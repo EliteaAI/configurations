@@ -23,3 +23,11 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # Rows whose name family has no reasoning but have reasoning switched on are reported and left for an admin.
 # #6908: environments that already ran it (dev, stage) run it again — configured rows now lose levels
 # their profile rules out (none on gpt-5.1-codex). Same params, dry run first.
+
+# 2.0.7 -> 2.0.8
+
+# Auto classifier setting and model identity (#6826): no migration. New optional JSONB fields default to
+# null: auto_routing.data.classifier, environment_settings.data.auto_routing_classifier and
+# llm_model.data.canonical_model. Model identity is derived on read and never stored.
+# After deploy, Admin -> Features -> Auto Model Selection: pick the platform classifier (a shared, fast model);
+# until one is set, Auto readiness reports CLASSIFIER_NOT_CONFIGURED.

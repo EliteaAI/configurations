@@ -2,9 +2,20 @@
 import hashlib
 import json
 
+from pydantic import ValidationError
+
 from .common_utils import get_public_project_id
-from .models.pd.auto_routing import routing_enabled
+from .models.pd.auto_routing import ClassifierRef, routing_enabled
 from .utils_getters import get_project_configuration
+
+
+def _classifier(value, source):
+    if value is None:
+        return None
+    try:
+        return {**ClassifierRef.model_validate(value).model_dump(), 'source': source}
+    except ValidationError:
+        return None
 
 
 def effective_settings(environment, project):
@@ -28,7 +39,12 @@ def effective_settings(environment, project):
     if malformed:
         fields['project_override'] = False
     fields['enabled'] = routing_enabled(env_data, project_data)
+    # Project classifier, else the platform default, else none (#6826); covered by revision.
+    fields['classifier'] = (_classifier(project_data.get('classifier'), 'project')
+                            or _classifier(env_data.get('auto_routing_classifier'), 'platform'))
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+    # Informational (UI "Use platform default" label); the effective classifier above is what revision covers.
+    fields['platform_classifier'] = _classifier(env_data.get('auto_routing_classifier'), 'platform')
     return fields
 
 

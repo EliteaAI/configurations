@@ -4,12 +4,15 @@ from ..common_utils import get_public_project_id
 from ..utils_getters import get_project_configuration
 from ..utils import create_configuration, update_configuration
 from ..routing_access import current_actor_id, is_platform_admin
+from ..routing_models import get_routing_models
+from ..routing_readiness import classifier_options
 
 
 def platform_values(record):
     data = (record or {}).get('data') or {}
     return {'available': data.get('auto_routing_available') is True,
-            'project_default': data.get('auto_routing_project_default') is True}
+            'project_default': data.get('auto_routing_project_default') is True,
+            'classifier': data.get('auto_routing_classifier')}
 
 
 class Method:
@@ -24,14 +27,19 @@ class Method:
         project_id = get_public_project_id()
         record = get_project_configuration(project_id, {'type': 'environment_settings', 'elitea_title': 'environment_settings'})
         if values is not None:
-            if not isinstance(values, dict) or set(values) != {'available', 'project_default'} or any(type(v) is not bool for v in values.values()):
+            flags = {'available', 'project_default'}
+            if not isinstance(values, dict) or not flags <= set(values) <= flags | {'classifier'} or any(type(values[key]) is not bool for key in flags):
                 raise ValueError('Both platform Auto flags must be booleans')
             data = {**((record or {}).get('data') or {}), 'auto_routing_available': values['available'],
                     'auto_routing_project_default': values['project_default']}
+            if 'classifier' in values:
+                # Shape and visibility are validated by validate_routing_write (ConfigurationError 'classifier').
+                data['auto_routing_classifier'] = values['classifier']
             if record:
                 record = update_configuration(project_id, record['id'], {'data': data})
             else:
                 record = create_configuration({'project_id': project_id, 'author_id': actor,
                     'elitea_title': 'environment_settings', 'label': 'Environment settings',
                     'type': 'environment_settings', 'shared': True, 'data': data})
-        return {**platform_values(record), 'can_manage': True}
+        options = classifier_options(get_routing_models(project_id, actor)['items'])
+        return {**platform_values(record), 'classifier_options': options, 'can_manage': True}

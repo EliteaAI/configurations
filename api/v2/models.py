@@ -55,10 +55,13 @@ class API(APIBase):
         result, status = service.get_models(section, include_shared)
         if section == 'llm' and status == 200:
             from ...routing_settings import get_effective_settings
+            from ...routing_readiness import get_auto_routing_readiness
+            from ...tracing_access import current_actor_id
             from ...model_defaults import effective_default_selection
             gates = get_effective_settings(project_id)
             result['auto_routing'] = {'enabled': gates['enabled'], 'revision': gates['revision'],
-                'profile_ref': {'id': 'v7-quality-cost', 'revision': 1}}
+                'profile_ref': {'id': 'v7-quality-cost', 'revision': 1},
+                'readiness': get_auto_routing_readiness(project_id, current_actor_id(), settings=gates)}
             result['default_selection'] = effective_default_selection(
                 VaultClient.from_project(project_id).get_secrets(), gates)
         return result, status
