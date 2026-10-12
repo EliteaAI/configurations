@@ -4,7 +4,7 @@ from typing import Any
 from flask import request
 from pydantic import BaseModel, RootModel
 
-from ...local_tools import APIBase, VaultClient, register_openapi
+from ...local_tools import APIBase, VaultClient, register_openapi, config as c
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 from ...utils import expand_configuration
 from tools import auth
@@ -39,6 +39,12 @@ class API(APIBase):
         ],
         request_body=BatchCheckPayload,
     )
+    @auth.decorators.check_api({
+        "permissions": ["configuration.secrets.secret.unsecret"],
+        "recommended_roles": {
+            c.ADMINISTRATION_MODE: {"admin": True, "viewer": False, "editor": True},
+            c.DEFAULT_MODE: {"admin": True, "viewer": False, "editor": True},
+        }})
     def post(self, project_id: int, **kwargs):
         items = request.json or []
         vc = VaultClient(project_id)
