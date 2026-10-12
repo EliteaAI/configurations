@@ -4,7 +4,7 @@ from typing import Any
 from flask import request
 from pydantic import RootModel, ConfigDict
 
-from ...local_tools import APIBase, register_openapi
+from ...local_tools import APIBase, register_openapi, config as c
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 from ...utils import expand_configuration
 from ...local_tools import VaultClient
@@ -48,6 +48,12 @@ class API(APIBase):
         request_body=CheckConnectionPayload,
         available_to_users=True,
     )
+    @auth.decorators.check_api({
+        "permissions": ["configuration.secrets.secret.unsecret"],
+        "recommended_roles": {
+            c.ADMINISTRATION_MODE: {"admin": True, "viewer": False, "editor": True},
+            c.DEFAULT_MODE: {"admin": True, "viewer": False, "editor": True},
+        }})
     def post(self, project_id: int, config_type: str, **kwargs):
         model = CONFIG_TYPE_REGISTRY.get(config_type)
         if not model:
