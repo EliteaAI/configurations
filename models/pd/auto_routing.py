@@ -1,5 +1,12 @@
 """Project availability override; profile qualification is a separate contract."""
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+
+
+class ClassifierRef(BaseModel):
+    """One exact deployment (model name + owner project) that classifies Auto requests (#6826)."""
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(min_length=1, max_length=512)
+    project_id: StrictInt = Field(gt=0)
 
 
 class AutoRoutingProjectSettings(BaseModel):
@@ -12,6 +19,10 @@ class AutoRoutingProjectSettings(BaseModel):
     enabled: StrictBool | None = Field(
         default=None,
         description='Use the platform default when unset. A project cannot override the platform master switch.',
+    )
+    classifier: ClassifierRef | None = Field(
+        default=None,
+        description='Model that classifies Auto requests. Unset inherits the platform default classifier.',
     )
 
 
