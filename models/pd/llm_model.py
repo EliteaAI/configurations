@@ -53,6 +53,13 @@ class LlmModel(BaseModel):
             "'openai' targets the OpenAI Responses API and is not supported for Claude models"
         )
     )
+    canonical_model: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional vendor/family identity (e.g. 'openai/gpt-5-6-luna') when the name does not reveal the "
+            "model. Unset derives it from the name; Auto uses it to match calibrated models"
+        )
+    )
 
     thinking_type: Optional[ThinkingType] = Field(
         default=None,
@@ -86,6 +93,18 @@ class LlmModel(BaseModel):
     def blank_description_to_none(cls, value):
         if isinstance(value, str):
             return value.strip() or None
+        return value
+
+    @field_validator('canonical_model', mode='before')
+    @classmethod
+    def validate_canonical_model(cls, value):
+        if isinstance(value, str):
+            value = value.strip() or None
+        if value is None:
+            return value
+        from ...llm_model_identity import parse_canonical
+        if not parse_canonical(value):
+            raise ValueError("must be '<vendor>/<family>' in lowercase with a known vendor, e.g. 'openai/gpt-5-6-luna'")
         return value
 
     @field_validator('thinking_type', 'supported_efforts', 'default_effort')
@@ -208,6 +227,7 @@ class LlmModelList(BaseModel):
     thinking_type: Optional[str] = None
     supported_efforts: Optional[list[str]] = None
     default_effort: Optional[str] = None
+    identity: Optional[dict] = None
 
     model_config = ConfigDict(from_attributes=True)
 

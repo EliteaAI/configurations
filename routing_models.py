@@ -9,6 +9,7 @@ import json
 
 from .common_utils import get_public_project_id
 from .folder_access import folder_exclusion_clause
+from .llm_model_identity import resolve_identity
 from .local_tools import db
 from .models.configuration import Configuration
 
@@ -27,6 +28,7 @@ def _digest(value):
 
 def _read_rows(project_id, user_id, shared_only):
     # Select only inventory metadata, never Configuration.data or ai_credentials.
+    # api_protocol and canonical_model are scalar identity inputs (#6826).
     fields = [
         Configuration.id.label('configuration_id'),
         Configuration.uuid.label('configuration_uuid'),
@@ -39,6 +41,8 @@ def _read_rows(project_id, user_id, shared_only):
         Configuration.data['name'].astext.label('name'),
         *(Configuration.data[key].label(key) for key in CAPABILITY_FIELDS),
         Configuration.data['mid_tier'].label('legacy_mid_tier'),
+        Configuration.data['api_protocol'].astext.label('api_protocol'),
+        Configuration.data['canonical_model'].astext.label('canonical_model'),
     ]
     filters = [Configuration.project_id == project_id, Configuration.section == 'llm']
     if shared_only:
@@ -76,6 +80,8 @@ def _model_record(row):
     for key in ('context_window', 'max_output_tokens'):
         if type(record[key]) is not int or record[key] <= 0:
             record[key] = None
+    record['identity'] = resolve_identity(
+        name, api_protocol=row.get('api_protocol'), explicit=row.get('canonical_model'))
     record['configuration_fingerprint'] = _digest(record)
     return record
 
