@@ -1,3 +1,4 @@
+import uuid
 from typing import Optional
 
 from pylon.core.tools import web
@@ -67,6 +68,27 @@ class RPC:
                     'name': config.label or config.elitea_title,
                     'type': config.type,
                     'section': config.section,
+                }
+        return None
+
+    @web.rpc('configurations_get_by_uuid', 'get_configuration_by_uuid')
+    def configurations_get_by_uuid(self, project_id: int, configuration_uuid: str) -> dict | None:
+        """Provenance of one configuration (owner project, shared flag) for server-side checks."""
+        try:
+            uuid_value = uuid.UUID(str(configuration_uuid))
+        except (TypeError, ValueError):
+            return None
+        with db.get_session(project_id) as session:
+            config = session.query(Configuration).filter_by(uuid=uuid_value).first()
+            if config:
+                return {
+                    'id': config.id,
+                    'uuid': str(config.uuid),
+                    'project_id': config.project_id,
+                    'type': config.type,
+                    'section': config.section,
+                    'shared': bool(config.shared),
+                    'elitea_title': config.elitea_title,
                 }
         return None
 
