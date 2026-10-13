@@ -11,11 +11,14 @@ from ..routing_settings import ALLOW_ACTIVATION, platform_policy
 
 def platform_values(record):
     data = (record or {}).get('data') or {}
+    policy, _, stored = platform_policy(data)
     return {'available': data.get('auto_routing_available') is True,
             'project_default': data.get('auto_routing_project_default') is True,
             'classifier': data.get('auto_routing_classifier'),
             # Complete platform policy; the built-in defaults while none is stored.
-            'policy': platform_policy(data)[0],
+            'policy': policy,
+            # A stored policy that no longer validates is served as the defaults; the admin UI should say so.
+            'policy_stored_invalid': not stored and data.get('auto_routing_policy') is not None,
             'allow_project_activation': data.get(ALLOW_ACTIVATION) is True}
 
 

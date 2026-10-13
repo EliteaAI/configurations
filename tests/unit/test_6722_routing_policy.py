@@ -17,11 +17,12 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = 'configurations_6722_policy'
 PUBLIC = 1
 DEFAULTS = {
-    'version': 1, 'shadow_mode': True, 'selector': {'artifact': None, 'tau': 0.85}, 'pool': None, 'fallback': None,
+    'version': 1, 'shadow_mode': True, 'selector': {'artifact': None, 'tau': 0.85, 'abstain': True}, 'pool': None, 'fallback': None,
     'output': {'default_allowance': 8000, 'min_cap': 256, 'max_cap': 32000},
     'thinking_budget_tokens': {'low': 2048, 'medium': 4096, 'high': 9092},
     'greeting_rule': True, 'classifier': {'enabled': False},
 }
+ART = {'artifact': 'sel-1', 'tau': 0.85, 'abstain': True}
 GPT54 = {'name': 'gpt-5.4', 'project_id': PUBLIC}
 TEAM = {'name': 'team-model', 'project_id': 7}
 LUNA = {'name': 'gpt-5.6-luna', 'project_id': PUBLIC}
@@ -105,14 +106,14 @@ def _bad_policies():
 
     cases = [with_(['version'], 2), with_(['shadow_mode'], 'true'), with_(['shadow_mode'], None),
              with_(['greeting_rule'], 1), with_(['classifier', 'enabled'], 'no'), {**base, 'unknown': 1},
-             with_(['selector', 'extra'], 1), with_(['output', 'extra'], 1), with_(['classifier', 'extra'], 1),
+             with_(['selector', 'extra'], 1), with_(['selector', 'abstain'], 'yes'), with_(['output', 'extra'], 1), with_(['classifier', 'extra'], 1),
              with_(['thinking_budget_tokens', 'extra'], 1), with_(['fallback'], {'name': 'm', 'project_id': 1, 'x': 1}),
              with_(['fallback'], 'gpt-5.4'), with_(['selector', 'artifact'], ''), with_(['selector', 'artifact'], '../x'),
              with_(['selector', 'artifact'], 'a' * 129)]
     cases += [with_(['selector', 'tau'], v) for v in (0.49, 1.0, 0.0, True, '0.9', None)]
     cases += [with_(['output', 'default_allowance'], v) for v in (255, 128001, True, 8000.5, None)]
-    cases += [with_(['output', 'min_cap'], v) for v in (0, 128001)]
-    cases += [with_(['output', 'max_cap'], v) for v in (0, 128001, '32000')]
+    cases += [with_(['output', 'min_cap'], v) for v in (0, 1, 255, 128001)]
+    cases += [with_(['output', 'max_cap'], v) for v in (0, 255, 128001, '32000')]
     cases += [with_(['output'], {'default_allowance': 8000, 'min_cap': 40000, 'max_cap': 32000})]
     cases += [with_(['thinking_budget_tokens', key], v) for key in ('low', 'medium', 'high') for v in (-1, 128001, '1', True)]
     cases += [with_(['pool'], v) for v in ([], [''], ['a' * 513], [1], ['m'] * 257, 'gpt-5.4')]
@@ -130,7 +131,7 @@ def test_every_policy_bound_is_enforced(env, policy):
 @pytest.mark.parametrize('path,value', [
     (('selector', 'tau'), 0.5), (('selector', 'tau'), 0.99), (('selector', 'tau'), 1 / 2),
     (('output', 'default_allowance'), 256), (('output', 'default_allowance'), 128000),
-    (('output', 'min_cap'), 1), (('output', 'max_cap'), 128000), (('thinking_budget_tokens', 'low'), 0),
+    (('output', 'min_cap'), 256), (('output', 'max_cap'), 128000), (('selector', 'abstain'), False), (('thinking_budget_tokens', 'low'), 0),
     (('thinking_budget_tokens', 'high'), 128000), (('selector', 'artifact'), 'selector-v5-r1'),
     (('pool',), ['gpt-5.4']), (('pool',), ['m'] * 256), (('fallback',), GPT54),
 ])
@@ -177,16 +178,16 @@ def test_nothing_configured_is_defaults_from_default(env):
 
 
 def test_platform_policy_wins_over_defaults(env):
-    stored = full(env, shadow_mode=False, selector={'artifact': 'sel-1', 'tau': 0.9}, fallback=GPT54)
+    stored = full(env, shadow_mode=False, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True}, fallback=GPT54)
     policy, source = _merge(env, stored)
     assert policy == stored
     assert set(source.values()) == {'platform'}
 
 
 def test_project_overrides_per_top_level_key(env):
-    stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9}, pool=['a', 'b'], fallback=GPT54)
+    stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True}, pool=['a', 'b'], fallback=GPT54)
     policy, source = _merge(env, stored, {'selector': {'tau': 0.7}, 'pool': ['c'], 'greeting_rule': False})
-    assert policy['selector'] == {'artifact': 'sel-1', 'tau': 0.7}  # nested keys merge, siblings inherited
+    assert policy['selector'] == {'artifact': 'sel-1', 'tau': 0.7, 'abstain': True}  # nested keys merge, siblings inherited
     assert policy['pool'] == ['c']  # arrays are replaced, not concatenated
     assert policy['greeting_rule'] is False and policy['fallback'] == GPT54
     assert source['selector'] == source['pool'] == source['greeting_rule'] == 'project'
@@ -200,14 +201,14 @@ def test_default_source_applies_below_a_project_override(env):
 
 
 def test_explicit_null_overrides_platform_value(env):
-    stored = full(env, pool=['a'], fallback=GPT54, selector={'artifact': 'sel-1', 'tau': 0.9})
+    stored = full(env, pool=['a'], fallback=GPT54, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True})
     policy, source = _merge(env, stored, {'pool': None, 'fallback': None, 'selector': {'artifact': None}})
-    assert policy['pool'] is None and policy['fallback'] is None and policy['selector'] == {'artifact': None, 'tau': 0.9}
+    assert policy['pool'] is None and policy['fallback'] is None and policy['selector'] == {'artifact': None, 'tau': 0.9, 'abstain': True}
     assert source['pool'] == source['fallback'] == 'project'
 
 
 def test_malformed_records_fail_closed_to_the_next_level(env):
-    stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9})
+    stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True})
     policy, _ = _merge(env, stored, {'selector': {'tau': 5}})
     assert policy['selector']['tau'] == 0.9
     policy, source = _merge(env, {'shadow_mode': 'no'}, None)
@@ -218,7 +219,7 @@ def test_malformed_records_fail_closed_to_the_next_level(env):
 def test_merge_does_not_mutate_inputs_or_share_state(env):
     stored = full(env)
     snapshot = copy.deepcopy(stored)
-    first, _ = _merge(env, stored, {'output': {'max_cap': 100}})
+    first, _ = _merge(env, stored, {'output': {'max_cap': 300}})
     first['output']['max_cap'] = 1
     assert stored == snapshot and _merge(env, stored)[0] == snapshot
 
@@ -228,22 +229,22 @@ def test_project_cap_is_clamped_to_the_platform_cap_at_merge(env):
     policy, _ = _merge(env, stored, {'output': {'max_cap': 32000}})
     assert policy['output']['max_cap'] == 20000
     policy, _ = _merge(env, stored, {'output': {'max_cap': 1000, 'min_cap': 500}})
-    assert policy['output'] == {'default_allowance': 8000, 'min_cap': 500, 'max_cap': 1000}
+    assert policy['output'] == {'default_allowance': 1000, 'min_cap': 500, 'max_cap': 1000}  # allowance follows the caps
     policy, _ = _merge(env, stored, {'output': {'min_cap': 30000}})
     assert policy['output']['min_cap'] == 20000  # never above the effective max_cap
 
 
 def test_project_cannot_leave_shadow_without_permission(env):
-    policy, source = _merge(env, full(env), {'shadow_mode': False})
+    policy, source = _merge(env, full(env, selector=ART), {'shadow_mode': False})
     assert policy['shadow_mode'] is True and source['shadow_mode'] == 'platform'
-    policy, source = _merge(env, None, {'shadow_mode': False})
+    policy, source = _merge(env, None, {'shadow_mode': False, 'selector': {'artifact': 'sel-1'}})
     assert policy['shadow_mode'] is True and source['shadow_mode'] == 'default'
-    policy, source = _merge(env, full(env), {'shadow_mode': False}, allow=True)
+    policy, source = _merge(env, full(env, selector=ART), {'shadow_mode': False}, allow=True)
     assert policy['shadow_mode'] is False and source['shadow_mode'] == 'project'
 
 
 def test_project_may_always_enter_shadow_and_never_escalates_a_live_platform(env):
-    live = full(env, shadow_mode=False)
+    live = full(env, shadow_mode=False, selector=ART)
     assert _merge(env, live, {'shadow_mode': True})[0]['shadow_mode'] is True
     assert _merge(env, live, {'shadow_mode': False})[0]['shadow_mode'] is False
 
@@ -264,11 +265,11 @@ def test_settings_return_policy_and_source(env):
 
 
 def test_revision_changes_with_each_effective_policy_change(env):
-    revisions = {_settings(env)['revision'], _settings(env, full(env, shadow_mode=False))['revision'],
+    revisions = {_settings(env)['revision'], _settings(env, full(env, shadow_mode=False, selector=ART))['revision'],
                  _settings(env, full(env, fallback=GPT54))['revision'],
                  _settings(env, None, {'selector': {'tau': 0.9}})['revision'],
                  _settings(env, None, {'pool': ['a']})['revision'],
-                 _settings(env, None, {'output': {'max_cap': 100}})['revision']}
+                 _settings(env, None, {'output': {'max_cap': 300}})['revision']}
     assert len(revisions) == 6
 
 
@@ -282,7 +283,7 @@ def test_revision_ignores_messages_source_and_ineffective_overrides(env):
     # same effective policy reached from another level: the source label is not part of revision
     assert _settings(env, stored)['revision'] == _settings(env, None, {'fallback': GPT54})['revision']
     # a refused activation leaves the effective policy, hence the revision, unchanged
-    assert _settings(env, stored, {'shadow_mode': False})['revision'] == _settings(env, stored)['revision']
+    assert _settings(env, full(env, fallback=GPT54, selector=ART), {'shadow_mode': False})['revision'] == _settings(env, full(env, fallback=GPT54, selector=ART))['revision']
 
 
 def test_revision_is_canonical_json_of_fields(env):
@@ -406,14 +407,14 @@ def test_project_cap_cannot_exceed_default_platform_cap(env):
 
 
 def test_project_cannot_leave_shadow_without_platform_permission(env):
-    _set_platform(env)
+    _set_platform(env, full(env, selector=ART))
     with pytest.raises(env.error) as caught:
         _project_write(env, {'policy': {'shadow_mode': False}})
     assert caught.value.field == 'policy.shadow_mode'
     assert _project_write(env, {'policy': {'shadow_mode': True}})['data']['policy'] == {'shadow_mode': True}
-    _set_platform(env, allow=True)
+    _set_platform(env, full(env, selector=ART), allow=True)
     assert _project_write(env, {'policy': {'shadow_mode': False}})['data']['policy'] == {'shadow_mode': False}
-    _set_platform(env, full(env, shadow_mode=False))
+    _set_platform(env, full(env, shadow_mode=False, selector=ART))
     assert _project_write(env, {'policy': {'shadow_mode': False}})['data']['policy'] == {'shadow_mode': False}
 
 
@@ -476,7 +477,8 @@ def test_platform_accepts_policy_with_shared_fallback(env):
     env.state.inventory = {PUBLIC: [item('gpt-5.4')]}
     result = _platform_write(env, {'auto_routing_policy': {'fallback': GPT54, 'selector': {'tau': 0.9}},
                                    'auto_routing_policy_allow_project_activation': True})
-    assert result['data']['auto_routing_policy'] == {**DEFAULTS, 'fallback': GPT54, 'selector': {'artifact': None, 'tau': 0.9}}
+    assert result['data']['auto_routing_policy'] == {**DEFAULTS, 'fallback': GPT54,
+                                                      'selector': {'artifact': None, 'tau': 0.9, 'abstain': True}}
     assert result['data']['auto_routing_policy_allow_project_activation'] is True
     assert env.state.inventory_calls == [(PUBLIC, 42)]
 
@@ -554,7 +556,7 @@ def admin(env, monkeypatch):
 def test_method_returns_effective_platform_policy_and_activation(env, admin):
     assert admin.method.auto_routing_platform_settings()['policy'] == DEFAULTS
     assert admin.method.auto_routing_platform_settings()['allow_project_activation'] is False
-    env.state.records[PUBLIC]['data'].update(auto_routing_policy=full(env, shadow_mode=False),
+    env.state.records[PUBLIC]['data'].update(auto_routing_policy=full(env, shadow_mode=False, selector=ART),
                                              auto_routing_policy_allow_project_activation=True)
     result = admin.method.auto_routing_platform_settings()
     assert result['policy']['shadow_mode'] is False and result['allow_project_activation'] is True
@@ -586,3 +588,193 @@ def test_method_put_keeps_the_strict_key_check(env, admin, values):
     with pytest.raises(ValueError):
         admin.method.auto_routing_platform_settings(values)
     assert admin.writes == []
+
+
+# --- review round: contract rules shared with the Gateway ----------------------------------
+
+def _budgets(low, medium, high):
+    return {'low': low, 'medium': medium, 'high': high}
+
+
+@pytest.mark.parametrize('budgets', [_budgets(2048, 2048, 9092), _budgets(4096, 2048, 9092), _budgets(0, 0, 0),
+                                     _budgets(2048, 4096, 4096), _budgets(9092, 4096, 2048)])
+def test_budgets_must_strictly_increase_on_the_full_model(env, budgets):
+    with pytest.raises(ValidationError, match='low < medium < high'):
+        env.pd.AutoRoutingPolicy.model_validate({**DEFAULTS, 'thinking_budget_tokens': budgets})
+    with pytest.raises(ValidationError):
+        env.environment(auto_routing_policy={**DEFAULTS, 'thinking_budget_tokens': budgets})
+
+
+def test_partial_budget_override_is_schema_valid_but_checked_after_merge(env):
+    assert env.pd.AutoRoutingPolicyOverride.model_validate({'thinking_budget_tokens': {'low': 5000}})
+    _set_platform(env)
+    with pytest.raises(env.error) as caught:
+        _project_write(env, {'policy': {'thinking_budget_tokens': {'low': 5000}}})  # 5000 !< platform medium 4096
+    assert caught.value.field == 'policy.thinking_budget_tokens'
+    ok = _project_write(env, {'policy': {'thinking_budget_tokens': {'low': 1000, 'high': 20000}}})
+    assert ok['data']['policy']['thinking_budget_tokens'] == {'low': 1000, 'high': 20000}
+
+
+def test_out_of_order_stored_budgets_fall_back_to_the_platform_at_merge(env):
+    stored = full(env, thinking_budget_tokens=_budgets(1000, 2000, 3000))
+    policy, source = _merge(env, stored, {'thinking_budget_tokens': {'low': 5000}})
+    assert policy['thinking_budget_tokens'] == _budgets(1000, 2000, 3000) and source['thinking_budget_tokens'] == 'platform'
+    policy, source = _merge(env, None, {'thinking_budget_tokens': {'medium': 2048}})  # equal to low
+    assert policy['thinking_budget_tokens'] == _budgets(2048, 4096, 9092) and source['thinking_budget_tokens'] == 'default'
+
+
+def test_stale_out_of_order_budgets_do_not_block_unrelated_saves(env):
+    _set_platform(env)
+    old = {'policy': {'thinking_budget_tokens': {'low': 5000}}}
+    assert _project_write(env, {'policy': {**old['policy'], 'greeting_rule': False}}, old)
+
+
+def test_default_allowance_is_clamped_into_the_effective_caps(env):
+    stored = full(env, output={'default_allowance': 8000, 'min_cap': 256, 'max_cap': 32000})
+    policy, _ = _merge(env, stored, {'output': {'max_cap': 4000}})  # lowered project cap
+    assert policy['output'] == {'default_allowance': 4000, 'min_cap': 256, 'max_cap': 4000}
+    low = full(env, output={'default_allowance': 300, 'min_cap': 256, 'max_cap': 32000})
+    assert _merge(env, low, {'output': {'min_cap': 500}})[0]['output']['default_allowance'] == 500
+    assert _merge(env, stored)[0]['output']['default_allowance'] == 8000
+    inherited = full(env, output={'default_allowance': 50000, 'min_cap': 256, 'max_cap': 32000})
+    assert _merge(env, inherited)[0]['output']['default_allowance'] == 32000
+
+
+def test_project_default_allowance_cannot_exceed_platform_cap(env):
+    _set_platform(env, full(env, output={'default_allowance': 8000, 'min_cap': 256, 'max_cap': 20000}))
+    assert _project_write(env, {'policy': {'output': {'default_allowance': 20000}}})
+    with pytest.raises(env.error) as caught:
+        _project_write(env, {'policy': {'output': {'default_allowance': 20001}}})
+    assert caught.value.field == 'policy.output.default_allowance'
+
+
+def test_abstain_defaults_on_and_merges(env):
+    assert env.pd.AutoRoutingPolicy().selector.abstain is True
+    policy, source = _merge(env, full(env, selector=ART), {'selector': {'abstain': False}})
+    assert policy['selector'] == {**ART, 'abstain': False} and source['selector'] == 'project'
+    assert env.pd.AutoRoutingPolicyOverride.model_validate({'selector': {'abstain': False}}).model_dump(
+        exclude_unset=True) == {'selector': {'abstain': False}}
+
+
+def test_leaving_shadow_requires_an_artifact_on_platform_writes(env):
+    env.state.inventory = {PUBLIC: []}
+    with pytest.raises(env.error) as caught:
+        _platform_write(env, {'auto_routing_policy': {'shadow_mode': False}})
+    assert caught.value.field == 'policy.selector.artifact'
+    assert caught.value.message == 'Leaving shadow mode requires a pinned selector artifact'
+    assert _platform_write(env, {'auto_routing_policy': {'shadow_mode': False, 'selector': {'artifact': 'sel-1'}}})
+    assert _platform_write(env, {'auto_routing_policy': {'shadow_mode': True}})
+
+
+def test_leaving_shadow_requires_an_artifact_on_project_writes(env):
+    _set_platform(env, allow=True)  # allowed to activate, but the platform pins no artifact
+    with pytest.raises(env.error) as caught:
+        _project_write(env, {'policy': {'shadow_mode': False}})
+    assert caught.value.field == 'policy.selector.artifact'
+    assert _project_write(env, {'policy': {'shadow_mode': False, 'selector': {'artifact': 'sel-2'}}})
+    _set_platform(env, full(env, selector=ART), allow=True)  # artifact inherited from the platform
+    assert _project_write(env, {'policy': {'shadow_mode': False}})
+    with pytest.raises(env.error, match='pinned selector artifact'):  # explicit null removes the inherited pin
+        _project_write(env, {'policy': {'shadow_mode': False, 'selector': {'artifact': None}}})
+    _set_platform(env, full(env, shadow_mode=False, selector=ART))  # live platform: dropping the pin is refused
+    with pytest.raises(env.error, match='pinned selector artifact'):
+        _project_write(env, {'policy': {'selector': {'artifact': None}}})
+
+
+def test_activation_without_artifact_is_forced_to_shadow_and_advisory(env):
+    stored = full(env, shadow_mode=False)  # stored before the guard, or by a direct database edit
+    result = _settings(env, stored)
+    assert result['policy']['shadow_mode'] is True and result['policy_issues'] == [
+        {'code': 'ACTIVATION_WITHOUT_ARTIFACT', 'source': 'policy'}]
+    ready = _ready_with(env, stored)
+    assert ready['ready'] is True
+    assert ready['reasons'] == [{'code': 'ACTIVATION_WITHOUT_ARTIFACT', 'message':
+        'The Auto routing policy leaves shadow mode without a pinned selector artifact; shadow mode stays on'}]
+    assert _settings(env, full(env, shadow_mode=False, selector=ART))['policy']['shadow_mode'] is False
+
+
+def _ready_with(env, platform_policy_value, project_policy=None):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
+                                           'auto_routing_classifier': LUNA, 'auto_routing_policy': platform_policy_value}},
+                         7: {'data': {'policy': project_policy}}}
+    env.state.inventory = {7: [item('gpt-5.6-luna')]}
+    return env.readiness.get_auto_routing_readiness(7, 42)
+
+
+def test_malformed_stored_platform_policy_serves_defaults_and_is_advisory(env):
+    result = _settings(env, {'shadow_mode': 'no'})
+    assert result['policy'] == DEFAULTS and result['policy_issues'] == [{'code': 'POLICY_INVALID_STORED', 'source': 'platform'}]
+    ready = _ready_with(env, {'selector': {'tau': 9}})
+    assert ready['ready'] is True and [r['code'] for r in ready['reasons']] == ['POLICY_INVALID_STORED']
+    assert 'built-in defaults' in ready['reasons'][0]['message']
+    assert _ready_with(env, None)['reasons'] == []
+    project = _ready_with(env, None, {'selector': {'tau': 9}})
+    assert project['ready'] is True and 'ignored' in project['reasons'][0]['message']
+
+
+def test_advisory_reasons_do_not_hide_blocking_ones(env):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy': {'x': 1}}}, 7: {'data': {}}}
+    env.state.inventory = {7: []}
+    result = env.readiness.get_auto_routing_readiness(7, 42)
+    assert result['ready'] is False
+    assert [r['code'] for r in result['reasons']] == ['AUTO_DISABLED', 'CLASSIFIER_NOT_CONFIGURED', 'POLICY_INVALID_STORED']
+
+
+def test_admin_payload_flags_an_invalid_stored_policy(env, admin):
+    assert admin.method.auto_routing_platform_settings()['policy_stored_invalid'] is False
+    env.state.records[PUBLIC]['data']['auto_routing_policy'] = {'shadow_mode': 'no'}
+    result = admin.method.auto_routing_platform_settings()
+    assert result['policy_stored_invalid'] is True and result['policy'] == DEFAULTS
+
+
+def test_models_listing_block_carries_policy_and_source(env):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA,
+                                           'auto_routing_policy': full(env, selector=ART)}},
+                         7: {'data': {'enabled': True, 'policy': {'greeting_rule': False}}}}
+    env.state.inventory = {7: [item('gpt-5.6-luna')]}
+    gates, refs, items = env.settings.get_classifier_state(7, 42, check_availability=True)
+    block = env.readiness.models_auto_routing(gates, refs, items)
+    assert set(block) == {'enabled', 'revision', 'profile_ref', 'policy', 'policy_source', 'readiness'}
+    assert block['policy']['greeting_rule'] is False and block['policy']['selector'] == ART
+    assert block['policy_source']['greeting_rule'] == 'project' and block['policy_source']['selector'] == 'platform'
+    assert block['revision'] == gates['revision'] and block['readiness']['ready'] is True
+
+
+def test_models_endpoint_uses_the_block_helper():
+    source = (ROOT / 'api/v2/models.py').read_text()
+    assert "result['auto_routing'] = models_auto_routing(gates, refs, items)" in source
+
+
+# Cross-component merge table (the Gateway fixture was not published on feat/6722-v5-selector): each row is
+# (platform policy, allow activation, project override) -> expected effective values and write outcome.
+MERGE_CASES = [
+    ('lowered project max_cap clamps the platform allowance',
+     {'selector': ART}, False, {'output': {'max_cap': 4000}},
+     {'output': {'default_allowance': 4000, 'min_cap': 256, 'max_cap': 4000}}, None),
+    ('equal budgets: refused on write, platform budgets on merge',
+     {}, False, {'thinking_budget_tokens': {'medium': 2048}},
+     {'thinking_budget_tokens': _budgets(2048, 4096, 9092)}, 'policy.thinking_budget_tokens'),
+    ('min_cap 1 is below the floor and the whole override is rejected',
+     {}, False, {'output': {'min_cap': 1}}, {'output': {'default_allowance': 8000, 'min_cap': 256, 'max_cap': 32000}}, 'data'),
+    ('shadow false without an artifact: refused on write, forced shadow on merge',
+     {}, True, {'shadow_mode': False}, {'shadow_mode': True}, 'policy.selector.artifact'),
+    ('shadow false with a platform artifact and permission is accepted',
+     {'selector': ART}, True, {'shadow_mode': False}, {'shadow_mode': False}, None),
+    ('shadow false without permission: refused on write, ignored on merge',
+     {'selector': ART}, False, {'shadow_mode': False}, {'shadow_mode': True}, 'policy.shadow_mode'),
+]
+
+
+@pytest.mark.parametrize('name,platform_overrides,allow,override,expected,refused', MERGE_CASES, ids=[c[0] for c in MERGE_CASES])
+def test_merge_case_table(env, name, platform_overrides, allow, override, expected, refused):
+    stored = full(env, **platform_overrides)
+    policy, _ = _merge(env, stored, override, allow=allow)
+    assert {key: policy[key] for key in expected} == expected
+    _set_platform(env, stored, allow)
+    env.state.inventory = {7: []}
+    if refused:
+        with pytest.raises(env.error) as caught:
+            _project_write(env, {'policy': override})
+        assert caught.value.field == refused
+    else:
+        assert _project_write(env, {'policy': override})['data']['policy'] == override

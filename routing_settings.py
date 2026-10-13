@@ -5,7 +5,9 @@ import json
 from pydantic import ValidationError
 
 from .common_utils import get_public_project_id
-from .models.pd.auto_routing import AutoRoutingPolicy, AutoRoutingPolicyOverride, ClassifierRef, routing_enabled
+from .models.pd.auto_routing import (
+    AutoRoutingPolicy, AutoRoutingPolicyOverride, ClassifierRef, budgets_increasing, routing_enabled,
+)
 from .utils_getters import get_project_configuration
 
 
@@ -116,19 +118,31 @@ def platform_policy(env_data):
     return (stored or AutoRoutingPolicy()).model_dump(mode='json'), env_data.get(ALLOW_ACTIVATION) is True, stored is not None
 
 
-def effective_policy(environment, project):
-    """Merge the platform policy with the project override: (policy, policy_source).
+def policy_resolution(environment, project):
+    """Merge the platform policy with the project override: (policy, policy_source, issues).
 
     Per top-level key, an override wins; nested objects merge field by field and lists are replaced.
-    Platform limits hold at merge time as well as at write time: a project cannot exceed the platform
-    ``output.max_cap`` and leaves shadow mode only when the platform policy is not in shadow mode or
-    allows project activation. A malformed override is ignored as a whole (fails closed to the platform).
+    Platform limits hold at merge time as well as at write time:
+    - a project cannot exceed the platform ``output.max_cap``; ``default_allowance`` is clamped into
+      [min_cap, max_cap];
+    - a project leaves shadow mode only when the platform policy is not in shadow mode or allows project
+      activation; an effective policy without a pinned selector artifact stays in shadow mode;
+    - thinking budgets that are not strictly increasing fall back to the platform budgets.
+    A malformed stored platform policy serves the defaults, a malformed override is ignored as a whole.
+    ``issues`` are advisory codes for readiness: POLICY_INVALID_STORED, ACTIVATION_WITHOUT_ARTIFACT.
     """
     env_data, project_data = _data(environment), _data(project)
+    issues = []
     policy, allow_activation, stored = platform_policy(env_data)
-    source = dict.fromkeys(policy, 'platform' if stored else 'default')
+    if not stored and env_data.get('auto_routing_policy') is not None:
+        issues.append({'code': 'POLICY_INVALID_STORED', 'source': 'platform'})
+    base_source = 'platform' if stored else 'default'
+    source = dict.fromkeys(policy, base_source)
     platform_max_cap = policy['output']['max_cap']
+    platform_budgets = dict(policy['thinking_budget_tokens'])
     override = _valid(AutoRoutingPolicyOverride, project_data.get('policy'))
+    if not override and project_data.get('policy') is not None:
+        issues.append({'code': 'POLICY_INVALID_STORED', 'source': 'project'})
     for key, value in (override.model_dump(mode='json', exclude_unset=True) if override else {}).items():
         if key == 'shadow_mode' and value is False and policy[key] is True and not allow_activation:
             continue
@@ -137,7 +151,20 @@ def effective_policy(environment, project):
     output = policy['output']
     output['max_cap'] = min(output['max_cap'], platform_max_cap)
     output['min_cap'] = min(output['min_cap'], output['max_cap'])
-    return policy, source
+    output['default_allowance'] = max(output['min_cap'], min(output['default_allowance'], output['max_cap']))
+    if not budgets_increasing(policy['thinking_budget_tokens']):
+        policy['thinking_budget_tokens'] = platform_budgets
+        source['thinking_budget_tokens'] = base_source
+    if policy['shadow_mode'] is False and policy['selector']['artifact'] is None:
+        policy['shadow_mode'] = True
+        source['shadow_mode'] = base_source
+        issues.append({'code': 'ACTIVATION_WITHOUT_ARTIFACT', 'source': 'policy'})
+    return policy, source, issues
+
+
+def effective_policy(environment, project):
+    """(policy, policy_source) of :func:`policy_resolution`."""
+    return policy_resolution(environment, project)[:2]
 
 
 def effective_settings(environment, project, low_tier=None, items=None):
@@ -160,11 +187,12 @@ def effective_settings(environment, project, low_tier=None, items=None):
     refs = classifier_refs(env_data, project_data, low_tier)
     fields['classifier'] = resolve_classifier(refs, items)
     # Platform policy merged with the project override; canonical JSON below makes it part of revision.
-    fields['policy'], policy_source = effective_policy(environment, project)
+    fields['policy'], policy_source, policy_issues = policy_resolution(environment, project)
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
     # Why no classifier resolved; derived from the resolution above, so not part of revision.
     fields['classifier_reason'] = classifier_reason(fields['classifier'], refs, items)
     fields['policy_source'] = policy_source
+    fields['policy_issues'] = policy_issues
     fields['fallback_reason'] = fallback_reason(fields['policy'], items)
     return fields
 

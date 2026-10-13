@@ -40,3 +40,6 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # built-in defaults (shadow_mode true, tau 0.85, output 8000/256/32000, thinking budgets 2048/4096/9092, greeting
 # rule on, no fallback), i.e. today's behaviour. The auto routing `revision` now also covers the effective policy,
 # so it changes once on deploy and routing pins are re-issued.
+# Rules shared with the Gateway: output caps floor 256, thinking budgets strictly increasing, shadow_mode false
+# needs a pinned selector.artifact (write refused; at merge shadow stays on and readiness reports
+# ACTIVATION_WITHOUT_ARTIFACT), selector.abstain defaults true.

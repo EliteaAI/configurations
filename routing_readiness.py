@@ -30,6 +30,24 @@ def _described(ref, items):
             'display_name': item.get('display_name') or ref['name'], 'source': ref['source']}
 
 
+# Informational: reported to admins but never block Auto (the effective policy already fails closed).
+ADVISORY_CODES = ('POLICY_INVALID_STORED', 'ACTIVATION_WITHOUT_ARTIFACT')
+ISSUE_MESSAGES = {
+    ('POLICY_INVALID_STORED', 'platform'): 'The stored platform Auto routing policy is invalid; built-in defaults are used',
+    ('POLICY_INVALID_STORED', 'project'): 'The project Auto routing policy override is invalid and is ignored',
+    ('ACTIVATION_WITHOUT_ARTIFACT', 'policy'):
+        'The Auto routing policy leaves shadow mode without a pinned selector artifact; shadow mode stays on',
+}
+
+
+def models_auto_routing(gates, refs, items):
+    """The ``auto_routing`` block of the models listing."""
+    return {'enabled': gates['enabled'], 'revision': gates['revision'],
+            'profile_ref': {'id': 'v7-quality-cost', 'revision': 1},
+            'policy': gates['policy'], 'policy_source': gates['policy_source'],
+            'readiness': readiness(gates, refs, items)}
+
+
 def readiness(settings, refs, items):
     """Reasons describe the finally used level; skipped levels are not reported (#6826 A1)."""
     default = resolve_classifier([(source, ref) for source, ref in refs if source != 'project'], items)
@@ -44,6 +62,8 @@ def readiness(settings, refs, items):
     # ready is false for an unresolvable policy.fallback only; an unset fallback or selector adds no reason.
     if fallback:
         reasons.append(fallback)
+    for issue in settings.get('policy_issues') or []:
+        reasons.append({'code': issue['code'], 'message': ISSUE_MESSAGES[(issue['code'], issue['source'])]})
     if used:
         classifier = {**_described(used, items), 'available': True}
     elif refs:
@@ -51,7 +71,7 @@ def readiness(settings, refs, items):
         classifier = {**_described({**ref, 'source': source}, items), 'available': False}
     else:
         classifier = None
-    return {'ready': not reasons, 'reasons': reasons, 'classifier': classifier,
+    return {'ready': not [r for r in reasons if r['code'] not in ADVISORY_CODES], 'reasons': reasons, 'classifier': classifier,
             'default_classifier': default and _described(default, items)}
 
 

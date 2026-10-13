@@ -25,12 +25,14 @@ class SelectorPolicy(_Strict):
     artifact: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ARTIFACT_ID,
                                  description='Pinned selector artifact id; must match the artifact installed in the Gateway.')
     tau: StrictFloat = Field(default=0.85, ge=0.5, le=0.99, description='Minimum predicted pass probability.')
+    abstain: StrictBool = Field(default=True, description="Abstain to the fallback when qualified models are within "
+                                                          "the selector's noise band.")
 
 
 class OutputPolicy(_Strict):
     default_allowance: StrictInt = Field(default=8000, ge=256, le=MAX_TOKENS)
-    min_cap: StrictInt = Field(default=256, ge=1, le=MAX_TOKENS)
-    max_cap: StrictInt = Field(default=32000, ge=1, le=MAX_TOKENS)
+    min_cap: StrictInt = Field(default=256, ge=256, le=MAX_TOKENS)
+    max_cap: StrictInt = Field(default=32000, ge=256, le=MAX_TOKENS)
 
     @model_validator(mode='after')
     def _ordered(self):
@@ -39,10 +41,20 @@ class OutputPolicy(_Strict):
         return self
 
 
+def budgets_increasing(budgets):
+    return budgets['low'] < budgets['medium'] < budgets['high']
+
+
 class ThinkingBudgets(_Strict):
     low: StrictInt = Field(default=2048, ge=0, le=MAX_TOKENS)
     medium: StrictInt = Field(default=4096, ge=0, le=MAX_TOKENS)
     high: StrictInt = Field(default=9092, ge=0, le=MAX_TOKENS)
+
+    @model_validator(mode='after')
+    def _increasing(self):
+        if not budgets_increasing(self.model_dump()):
+            raise ValueError('thinking budgets must satisfy low < medium < high')
+        return self
 
 
 class ClassifierPolicy(_Strict):
@@ -75,12 +87,13 @@ class AutoRoutingPolicy(_Strict):
 class SelectorOverride(_Strict):
     artifact: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ARTIFACT_ID)
     tau: StrictFloat = Field(default=None, ge=0.5, le=0.99)
+    abstain: StrictBool = None
 
 
 class OutputOverride(_Strict):
     default_allowance: StrictInt = Field(default=None, ge=256, le=MAX_TOKENS)
-    min_cap: StrictInt = Field(default=None, ge=1, le=MAX_TOKENS)
-    max_cap: StrictInt = Field(default=None, ge=1, le=MAX_TOKENS)
+    min_cap: StrictInt = Field(default=None, ge=256, le=MAX_TOKENS)
+    max_cap: StrictInt = Field(default=None, ge=256, le=MAX_TOKENS)
 
     @model_validator(mode='after')
     def _ordered(self):

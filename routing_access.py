@@ -2,7 +2,7 @@
 from pydantic import ValidationError
 from .common_utils import get_public_project_id
 from .exceptions import ConfigurationError
-from .models.pd.auto_routing import AutoRoutingProjectSettings
+from .models.pd.auto_routing import AutoRoutingProjectSettings, budgets_increasing
 from .models.pd.environment_settings import EnvironmentSettings
 from .tracing_access import current_actor_id, is_own_personal_project, is_project_admin
 
@@ -58,14 +58,30 @@ def _check_project_policy(new, old, project_id, actor):
     platform, allow_activation, _ = platform_policy(_data(get_project_configuration(
         get_public_project_id(), {'type': 'environment_settings', 'elitea_title': 'environment_settings'})))
     output, old_output = new.get('output') or {}, old.get('output') or {}
-    for key in ('min_cap', 'max_cap'):
+    for key in ('min_cap', 'max_cap', 'default_allowance'):
         if output.get(key) is not None and output[key] != old_output.get(key) and output[key] > platform['output']['max_cap']:
             raise ConfigurationError(f'policy.output.{key}',
                                      f"Project {key} cannot exceed the platform maximum of {platform['output']['max_cap']}")
+    budgets = new.get('thinking_budget_tokens') or {}
+    if budgets and budgets != (old.get('thinking_budget_tokens') or {}) and not budgets_increasing(
+            {**platform['thinking_budget_tokens'], **budgets}):
+        raise ConfigurationError('policy.thinking_budget_tokens',
+                                 'Thinking budgets must satisfy low < medium < high after merging with the platform policy')
     if (new.get('shadow_mode') is False and old.get('shadow_mode') is not False
             and platform['shadow_mode'] is True and not allow_activation):
         raise ConfigurationError('policy.shadow_mode', 'The platform policy does not allow projects to leave shadow mode')
+    selector, old_selector = new.get('selector') or {}, old.get('selector') or {}
+    artifact_changed = 'artifact' in selector and ('artifact' not in old_selector or selector['artifact'] != old_selector['artifact'])
+    if (new.get('shadow_mode') is not None and new['shadow_mode'] != old.get('shadow_mode')) or artifact_changed:
+        shadow = platform['shadow_mode'] if new.get('shadow_mode') is None else new['shadow_mode']
+        artifact = selector['artifact'] if 'artifact' in selector else platform['selector']['artifact']
+        _require_artifact(shadow, artifact)
     _check_new_classifier(new.get('fallback'), old.get('fallback'), project_id, actor, field='policy.fallback')
+
+
+def _require_artifact(shadow_mode, artifact):
+    if shadow_mode is False and artifact is None:
+        raise ConfigurationError('policy.selector.artifact', 'Leaving shadow mode requires a pinned selector artifact')
 
 
 def is_platform_admin(actor):
@@ -140,6 +156,9 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
             raise ConfigurationError('data', 'Platform Auto model selection is managed by Administration admins')
         _check_new_classifier(validated.get(CLASSIFIER_FIELD), old_data.get(CLASSIFIER_FIELD),
                               project_id, actor, shared_only=True)
+        if policy_changed:
+            policy = validated.get(POLICY_FIELD) or {}
+            _require_artifact(policy.get('shadow_mode'), (policy.get('selector') or {}).get('artifact'))
         _check_new_classifier((validated.get(POLICY_FIELD) or {}).get('fallback'),
                               (old_data.get(POLICY_FIELD) or {}).get('fallback'),
                               project_id, actor, shared_only=True, field='policy.fallback')

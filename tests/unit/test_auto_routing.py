@@ -192,7 +192,7 @@ def test_administration_method_preserves_environment_and_requires_actual_admin(m
     actual = method.auto_routing_platform_settings({'available': True, 'project_default': False})
     assert actual == {'available': True, 'project_default': False, 'classifier': None,
                       'policy': modules.project.AutoRoutingPolicy().model_dump(mode='json'),
-                      'allow_project_activation': False, 'classifier_options': [], 'can_manage': True}
+                      'allow_project_activation': False, 'policy_stored_invalid': False, 'classifier_options': [], 'can_manage': True}
     assert writes[0] == (1, 9, {'data': {'system_sender_name': 'Company', 'auto_routing_available': True, 'auto_routing_project_default': False}})
     namespace['is_platform_admin'] = lambda *a: False
     with pytest.raises(PermissionError):
