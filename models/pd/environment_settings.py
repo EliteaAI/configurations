@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
-from .auto_routing import ClassifierRef
+from .auto_routing import AutoRoutingPolicy, ClassifierRef
 
 
 class EnvironmentSettings(BaseModel):
@@ -28,6 +28,23 @@ class EnvironmentSettings(BaseModel):
         default=None,
         title="Default Auto classifier",
         description="Shared public model that classifies Auto requests for projects without their own classifier.",
+    )
+    auto_routing_policy: AutoRoutingPolicy | None = Field(
+        default=None,
+        title="Auto routing policy",
+        description="Platform default Auto routing policy (selector, fallback, output limits, thinking budgets). "
+                    "Unset applies the built-in defaults.",
+    )
+    auto_routing_policy_enabled: StrictBool = Field(
+        default=False,
+        title="Serve the Auto routing policy",
+        description="Off: the Gateway receives no policy and behaves as before the policy existed. "
+                    "On: every project receives the effective policy and the Gateway runs the selector in shadow mode.",
+    )
+    auto_routing_policy_allow_project_activation: StrictBool = Field(
+        default=False,
+        title="Allow projects to leave Auto shadow mode",
+        description="When off, projects cannot turn the shadow switch off while the platform policy is in shadow mode.",
     )
 
     system_sender_name: str = Field(

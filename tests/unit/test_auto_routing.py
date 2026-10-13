@@ -174,7 +174,7 @@ def test_public_project_admin_is_not_platform_admin(modules, monkeypatch):
             'elitea_title': 'environment_settings', 'data': {'auto_routing_available': True}})
 
 
-def test_administration_method_preserves_environment_and_requires_actual_admin():
+def test_administration_method_preserves_environment_and_requires_actual_admin(modules):
     import ast
     source = ROOT/'methods/routing.py'
     tree = ast.parse(source.read_text())
@@ -185,12 +185,15 @@ def test_administration_method_preserves_environment_and_requires_actual_admin()
         'current_actor_id': lambda: 42, 'is_platform_admin': lambda actor: actor == 42,
         'get_public_project_id': lambda: 1, 'get_project_configuration': lambda *a: record,
         'update_configuration': lambda project, ident, data: writes.append((project, ident, data)) or {'id': ident, **data},
-        'get_routing_models': lambda project, actor: {'items': []}, 'classifier_options': lambda items: []}
+        'get_routing_models': lambda project, actor: {'items': []}, 'classifier_options': lambda items: [],
+        'platform_policy': modules.settings.platform_policy, 'policy_enabled': modules.settings.policy_enabled,
+        'POLICY_ENABLED': modules.settings.POLICY_ENABLED, 'ALLOW_ACTIVATION': modules.settings.ALLOW_ACTIVATION}
     exec(compile(tree, str(source), 'exec'), namespace)
     method = namespace['Method']()
     actual = method.auto_routing_platform_settings({'available': True, 'project_default': False})
     assert actual == {'available': True, 'project_default': False, 'classifier': None,
-                      'classifier_options': [], 'can_manage': True}
+                      'policy': modules.project.AutoRoutingPolicy().model_dump(mode='json'),
+                      'allow_project_activation': False, 'policy_stored_invalid': False, 'policy_enabled': False, 'classifier_options': [], 'can_manage': True}
     assert writes[0] == (1, 9, {'data': {'system_sender_name': 'Company', 'auto_routing_available': True, 'auto_routing_project_default': False}})
     namespace['is_platform_admin'] = lambda *a: False
     with pytest.raises(PermissionError):
