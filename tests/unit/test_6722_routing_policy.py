@@ -186,9 +186,9 @@ def test_platform_policy_wins_over_defaults(env):
 
 def test_project_overrides_per_top_level_key(env):
     stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True}, pool=['a', 'b'], fallback=GPT54)
-    policy, source = _merge(env, stored, {'selector': {'tau': 0.7}, 'pool': ['c'], 'greeting_rule': False})
+    policy, source = _merge(env, stored, {'selector': {'tau': 0.7}, 'pool': ['b'], 'greeting_rule': False})
     assert policy['selector'] == {'artifact': 'sel-1', 'tau': 0.7, 'abstain': True}  # nested keys merge, siblings inherited
-    assert policy['pool'] == ['c']  # arrays are replaced, not concatenated
+    assert policy['pool'] == ['b']  # arrays are replaced, not concatenated
     assert policy['greeting_rule'] is False and policy['fallback'] == GPT54
     assert source['selector'] == source['pool'] == source['greeting_rule'] == 'project'
     assert source['fallback'] == source['output'] == source['shadow_mode'] == 'platform'
@@ -200,11 +200,29 @@ def test_default_source_applies_below_a_project_override(env):
     assert source['thinking_budget_tokens'] == 'project' and source['selector'] == 'default'
 
 
-def test_explicit_null_overrides_platform_value(env):
-    stored = full(env, pool=['a'], fallback=GPT54, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True})
+def test_explicit_null_clears_only_what_the_platform_does_not_restrict(env):
+    stored = full(env, selector={'artifact': 'sel-1', 'tau': 0.9, 'abstain': True})
     policy, source = _merge(env, stored, {'pool': None, 'fallback': None, 'selector': {'artifact': None}})
-    assert policy['pool'] is None and policy['fallback'] is None and policy['selector'] == {'artifact': None, 'tau': 0.9, 'abstain': True}
+    assert policy['pool'] is None and policy['fallback'] is None and policy['selector']['artifact'] is None
     assert source['pool'] == source['fallback'] == 'project'
+
+
+def test_project_cannot_lift_platform_pool_or_fallback_at_merge(env):
+    stored = full(env, pool=['a', 'b'], fallback=GPT54)
+    policy, source = _merge(env, stored, {'pool': None, 'fallback': None})
+    assert policy['pool'] == ['a', 'b'] and policy['fallback'] == GPT54
+    assert source['pool'] == source['fallback'] == 'platform'
+
+
+def test_project_pool_may_narrow_but_not_widen_at_merge(env):
+    stored = full(env, pool=['a', 'b'])
+    assert _merge(env, stored, {'pool': ['b']})[0]['pool'] == ['b']
+    assert _merge(env, stored, {'pool': ['b']})[1]['pool'] == 'project'
+    for widened in (['a', 'c'], ['c']):
+        policy, source = _merge(env, stored, {'pool': widened})
+        assert policy['pool'] == ['a', 'b'] and source['pool'] == 'platform'
+    assert _merge(env, full(env), {'pool': ['x', 'y']})[0]['pool'] == ['x', 'y']  # no platform pool: any list
+    assert _merge(env, stored, {'fallback': TEAM})[0]['fallback'] == TEAM  # a project may set its own fallback
 
 
 def test_malformed_records_fail_closed_to_the_next_level(env):
@@ -252,7 +270,7 @@ def test_project_may_always_enter_shadow_and_never_escalates_a_live_platform(env
 # --- effective_settings: revision, source, reasons -----------------------------------------
 
 def _settings(env, platform_data=None, project_policy=None, items=None, allow=False):
-    environment = {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
+    environment = {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_project_default': True,
                             'auto_routing_classifier': LUNA, 'auto_routing_policy': platform_data,
                             'auto_routing_policy_allow_project_activation': allow}}
     return env.settings.effective_settings(environment, {'data': {'policy': project_policy}}, None, items)
@@ -296,7 +314,7 @@ def test_revision_is_canonical_json_of_fields(env):
 # --- fallback resolution and readiness -----------------------------------------------------
 
 def _ready(env, fallback, inventory, platform_fallback=None):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_project_default': True,
                                            'auto_routing_classifier': LUNA,
                                            'auto_routing_policy': full(env, fallback=platform_fallback) if platform_fallback else None}},
                          7: {'data': {'policy': {'fallback': fallback} if fallback else None}}}
@@ -327,7 +345,7 @@ def test_unresolvable_fallback_reports_reason_and_is_not_ready(env, inventory, m
 def test_platform_fallback_is_checked_too_and_inventory_read_for_it(env):
     result = _ready(env, None, [item('gpt-5.6-luna')], platform_fallback=GPT54)
     assert [r['code'] for r in result['reasons']] == ['FALLBACK_UNAVAILABLE']
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy': full(env, fallback=GPT54)}},
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_policy': full(env, fallback=GPT54)}},
                          7: {'data': {}}}
     env.state.inventory_calls.clear()
     env.rpc.configurations_get_auto_routing_settings(7, 42)
@@ -335,7 +353,7 @@ def test_platform_fallback_is_checked_too_and_inventory_read_for_it(env):
 
 
 def test_fallback_reason_is_independent_of_other_reasons(env):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy': full(env, fallback=GPT54)}},
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_policy': full(env, fallback=GPT54)}},
                          7: {'data': {}}}
     env.state.inventory = {7: []}
     codes = [r['code'] for r in env.readiness.get_auto_routing_readiness(7, 42)['reasons']]
@@ -345,7 +363,7 @@ def test_fallback_reason_is_independent_of_other_reasons(env):
 # --- RPC payload ---------------------------------------------------------------------------
 
 def test_settings_rpc_payload_shape(env):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA,
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_classifier': LUNA,
                                            'auto_routing_policy': full(env, fallback=GPT54)}},
                          7: {'data': {'enabled': True, 'policy': {'selector': {'tau': 0.9}}}}}
     unchecked = env.rpc.configurations_get_auto_routing_settings(7)
@@ -360,7 +378,7 @@ def test_settings_rpc_payload_shape(env):
 
 
 def test_absent_policy_leaves_legacy_fields_untouched(env):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True}}, 7: {'data': {'enabled': True}}}
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True}}, 7: {'data': {'enabled': True}}}
     result = env.rpc.configurations_get_auto_routing_settings(7, 42)
     assert result['policy'] == DEFAULTS and set(result['policy_source'].values()) == {'default'}
     assert result['enabled'] is True and result['classifier'] is None and result['fallback_reason'] is None
@@ -515,7 +533,7 @@ def test_platform_unchanged_policy_is_not_revalidated_and_legacy_save_preserves_
     env.state.inventory = {PUBLIC: []}
     stored = full(env, fallback=GPT54)
     old = {'auto_routing_policy': stored, 'auto_routing_policy_allow_project_activation': True}
-    result = _platform_write(env, {'auto_routing_available': True, 'auto_routing_policy': copy.deepcopy(stored)}, old)
+    result = _platform_write(env, {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_policy': copy.deepcopy(stored)}, old)
     assert result['data']['auto_routing_available'] is True and env.state.inventory_calls == []
     env.state.actor = None
     result = _platform_write(env, {'system_sender_name': 'Company'}, old)
@@ -694,7 +712,7 @@ def test_activation_without_artifact_is_forced_to_shadow_and_advisory(env):
 
 
 def _ready_with(env, platform_policy_value, project_policy=None):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_project_default': True,
                                            'auto_routing_classifier': LUNA, 'auto_routing_policy': platform_policy_value}},
                          7: {'data': {'policy': project_policy}}}
     env.state.inventory = {7: [item('gpt-5.6-luna')]}
@@ -713,7 +731,7 @@ def test_malformed_stored_platform_policy_serves_defaults_and_is_advisory(env):
 
 
 def test_advisory_reasons_do_not_hide_blocking_ones(env):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy': {'x': 1}}}, 7: {'data': {}}}
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_policy': {'x': 1}}}, 7: {'data': {}}}
     env.state.inventory = {7: []}
     result = env.readiness.get_auto_routing_readiness(7, 42)
     assert result['ready'] is False
@@ -728,7 +746,7 @@ def test_admin_payload_flags_an_invalid_stored_policy(env, admin):
 
 
 def test_models_listing_block_carries_policy_and_source(env):
-    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA,
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_policy_enabled': True, 'auto_routing_classifier': LUNA,
                                            'auto_routing_policy': full(env, selector=ART)}},
                          7: {'data': {'enabled': True, 'policy': {'greeting_rule': False}}}}
     env.state.inventory = {7: [item('gpt-5.6-luna')]}
@@ -778,3 +796,145 @@ def test_merge_case_table(env, name, platform_overrides, allow, override, expect
         assert caught.value.field == refused
     else:
         assert _project_write(env, {'policy': override})['data']['policy'] == override
+
+
+# --- review round 2: pool/fallback narrowing, pool existence, platform switch ---------------
+
+def _inventory(env, *models):
+    env.state.inventory = {7: list(models), PUBLIC: list(models)}
+
+
+def canonical_item(name, canonical, **kw):
+    return {**item(name, **kw), 'identity': {'kind': 'chat', 'canonical': canonical, 'low_tier_hint': False}}
+
+
+def test_project_write_cannot_lift_or_widen_the_platform_pool(env):
+    _set_platform(env, full(env, pool=['gpt-5.4', 'openai/gpt-5-6']))
+    _inventory(env, item('gpt-5.4'), canonical_item('luna', 'openai/gpt-5-6'), item('other'))
+    assert _project_write(env, {'policy': {'pool': ['gpt-5.4']}})['data']['policy'] == {'pool': ['gpt-5.4']}
+    for bad in (None, ['gpt-5.4', 'other']):
+        with pytest.raises(env.error) as caught:
+            _project_write(env, {'policy': {'pool': bad}})
+        assert caught.value.field == 'policy.pool'
+    # no platform pool: any list of visible models, and null is a no-op
+    _set_platform(env)
+    assert _project_write(env, {'policy': {'pool': ['other']}})
+    assert _project_write(env, {'policy': {'pool': None}})
+
+
+def test_project_write_cannot_remove_the_platform_fallback(env):
+    _set_platform(env, full(env, fallback=GPT54))
+    _inventory(env, item('gpt-5.4'), item('team-model', project_id=7))
+    with pytest.raises(env.error) as caught:
+        _project_write(env, {'policy': {'fallback': None}})
+    assert caught.value.field == 'policy.fallback'
+    assert _project_write(env, {'policy': {'fallback': TEAM}})['data']['policy'] == {'fallback': TEAM}
+    # an unchanged stored null is not re-checked
+    assert _project_write(env, {'policy': {'fallback': None, 'greeting_rule': False}}, {'policy': {'fallback': None}})
+
+
+def test_pool_entries_must_be_visible_canonical_ids_or_exact_names(env):
+    _set_platform(env)
+    _inventory(env, canonical_item('luna', 'openai/gpt-5-6'), item('plain'))
+    assert _project_write(env, {'policy': {'pool': ['openai/gpt-5-6', 'plain', 'luna']}})
+    with pytest.raises(env.error) as caught:
+        _project_write(env, {'policy': {'pool': ['openai/gpt-5-6', 'anthropic/claude-x', 'ghost', 'ghost']}})
+    assert caught.value.field == 'policy.pool'
+    assert caught.value.message == 'Unknown model(s): anthropic/claude-x, ghost'
+    with pytest.raises(env.error, match='Unknown model'):
+        _project_write(env, {'policy': {'pool': ['PLAIN']}})
+
+
+def test_unchanged_pool_is_not_revalidated(env):
+    _set_platform(env)
+    _inventory(env)
+    old = {'policy': {'pool': ['ghost']}}
+    assert _project_write(env, {'policy': {'pool': ['ghost'], 'greeting_rule': False}}, old)
+    assert env.state.inventory_calls == []
+
+
+def test_platform_pool_entries_must_be_shared_visible_models(env):
+    env.state.inventory = {PUBLIC: [canonical_item('luna', 'openai/gpt-5-6'), item('private', shared=False)]}
+    assert _platform_write(env, {'auto_routing_policy': {'pool': ['openai/gpt-5-6', 'luna']}})
+    for pool in (['private'], ['openai/other']):
+        with pytest.raises(env.error) as caught:
+            _platform_write(env, {'auto_routing_policy': {'pool': pool}})
+        assert caught.value.field == 'policy.pool'
+    env.state.inventory_calls.clear()
+    old = {'auto_routing_policy': full(env, pool=['ghost'])}
+    assert _platform_write(env, {'auto_routing_policy': full(env, pool=['ghost']), 'auto_routing_available': True}, old)
+    assert env.state.inventory_calls == []
+
+
+def test_tau_description_documents_the_low_floor(env):
+    description = env.pd.SelectorPolicy.model_fields['tau'].description
+    assert '0.7' in description and 'cheapest' in description
+
+
+# platform switch: off (default) = the contract and revision of main
+
+def _gates(env, enabled, policy=None, project=None):
+    environment = {'data': {'auto_routing_available': True, 'auto_routing_project_default': True,
+                            'auto_routing_classifier': LUNA, 'auto_routing_policy': policy,
+                            'auto_routing_policy_enabled': enabled}}
+    return env.settings.effective_settings(environment, {'data': {'policy': project}}, None, [item('gpt-5.6-luna')])
+
+
+def test_policy_is_not_served_while_the_platform_switch_is_off(env):
+    assert env.environment().auto_routing_policy_enabled is False
+    stored = full(env, fallback=GPT54, selector=ART, shadow_mode=False)
+    for enabled in (False, None):
+        gates = _gates(env, enabled, stored, {'greeting_rule': False})
+        for key in ('policy', 'policy_source', 'policy_issues', 'fallback_reason'):
+            assert key not in gates
+    assert 'policy' not in _gates(env, False)
+
+
+def test_revision_is_independent_of_policy_while_off_and_rotates_once_on_enable(env):
+    off = {_gates(env, False)['revision'], _gates(env, False, full(env, fallback=GPT54))['revision'],
+           _gates(env, False, None, {'greeting_rule': False})['revision']}
+    assert len(off) == 1
+    assert _gates(env, True)['revision'] not in off
+    assert _gates(env, True)['revision'] != _gates(env, True, full(env, fallback=GPT54))['revision']
+
+
+def test_switch_off_matches_the_pre_policy_shape(env):
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA,
+                                           'auto_routing_policy': full(env, fallback=GPT54)}},
+                         7: {'data': {'enabled': True}}}
+    env.state.inventory = {7: [item('gpt-5.6-luna')]}
+    result = env.rpc.configurations_get_auto_routing_settings(7, 42)
+    assert set(result) == {'available', 'project_default', 'project_override', 'enabled', 'classifier', 'revision',
+                           'classifier_reason'}
+    assert env.state.inventory_calls == [(7, 42)]  # classifier only; no extra read for an unserved fallback
+    ready = env.readiness.get_auto_routing_readiness(7, 42)
+    assert ready['ready'] is True and ready['reasons'] == []  # an unusable fallback is irrelevant while off
+
+
+def test_models_block_omits_policy_while_off_and_carries_it_when_on(env):
+    for enabled, expected in ((False, False), (True, True)):
+        env.state.records = {PUBLIC: {'data': {'auto_routing_available': True, 'auto_routing_classifier': LUNA,
+                                               'auto_routing_policy_enabled': enabled}}, 7: {'data': {'enabled': True}}}
+        env.state.inventory = {7: [item('gpt-5.6-luna')]}
+        gates, refs, items = env.settings.get_classifier_state(7, 42, check_availability=True)
+        block = env.readiness.models_auto_routing(gates, refs, items)
+        assert ('policy' in block and 'policy_source' in block) is expected
+
+
+def test_switch_change_requires_administration_admin(env):
+    env.state.platform_admin = False
+    with pytest.raises(env.error, match='Administration admins'):
+        _platform_write(env, {'auto_routing_policy_enabled': True})
+    env.state.platform_admin = True
+    assert _platform_write(env, {'auto_routing_policy_enabled': True})['data']['auto_routing_policy_enabled'] is True
+    env.state.actor = None  # a legacy save keeps it
+    old = {'auto_routing_policy_enabled': True}
+    assert _platform_write(env, {'system_sender_name': 'Company'}, old)['data']['auto_routing_policy_enabled'] is True
+
+
+def test_method_exposes_and_sets_the_switch(env, admin):
+    assert admin.method.auto_routing_platform_settings()['policy_enabled'] is False
+    result = admin.method.auto_routing_platform_settings({'available': True, 'project_default': True, 'policy_enabled': True})
+    assert admin.writes[0][2]['data']['auto_routing_policy_enabled'] is True and result['policy_enabled'] is True
+    with pytest.raises(ValueError):
+        admin.method.auto_routing_platform_settings({'available': True, 'project_default': True, 'policy_enabled': 'yes'})

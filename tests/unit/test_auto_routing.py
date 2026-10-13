@@ -186,13 +186,14 @@ def test_administration_method_preserves_environment_and_requires_actual_admin(m
         'get_public_project_id': lambda: 1, 'get_project_configuration': lambda *a: record,
         'update_configuration': lambda project, ident, data: writes.append((project, ident, data)) or {'id': ident, **data},
         'get_routing_models': lambda project, actor: {'items': []}, 'classifier_options': lambda items: [],
-        'platform_policy': modules.settings.platform_policy, 'ALLOW_ACTIVATION': modules.settings.ALLOW_ACTIVATION}
+        'platform_policy': modules.settings.platform_policy, 'policy_enabled': modules.settings.policy_enabled,
+        'POLICY_ENABLED': modules.settings.POLICY_ENABLED, 'ALLOW_ACTIVATION': modules.settings.ALLOW_ACTIVATION}
     exec(compile(tree, str(source), 'exec'), namespace)
     method = namespace['Method']()
     actual = method.auto_routing_platform_settings({'available': True, 'project_default': False})
     assert actual == {'available': True, 'project_default': False, 'classifier': None,
                       'policy': modules.project.AutoRoutingPolicy().model_dump(mode='json'),
-                      'allow_project_activation': False, 'policy_stored_invalid': False, 'classifier_options': [], 'can_manage': True}
+                      'allow_project_activation': False, 'policy_stored_invalid': False, 'policy_enabled': False, 'classifier_options': [], 'can_manage': True}
     assert writes[0] == (1, 9, {'data': {'system_sender_name': 'Company', 'auto_routing_available': True, 'auto_routing_project_default': False}})
     namespace['is_platform_admin'] = lambda *a: False
     with pytest.raises(PermissionError):

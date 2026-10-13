@@ -408,7 +408,7 @@ def test_platform_payload_returns_classifier_and_low_tier_options(env, admin):
     result = admin.method.auto_routing_platform_settings()
     assert result == {'available': False, 'project_default': False, 'classifier': None, 'can_manage': True,
         'policy': env.pd.AutoRoutingPolicy().model_dump(mode='json'), 'allow_project_activation': False,
-        'policy_stored_invalid': False, 'classifier_options': [
+        'policy_stored_invalid': False, 'policy_enabled': False, 'classifier_options': [
             {'name': 'gpt-5.6-luna', 'project_id': PUBLIC, 'display_name': 'Luna', 'low_tier': True},
             {'name': 'team-small', 'project_id': PUBLIC, 'display_name': 'Team small', 'low_tier': True},
         ]}

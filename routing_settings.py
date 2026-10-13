@@ -101,6 +101,12 @@ def fallback_reason(policy, items):
 
 NESTED_POLICY_KEYS = ('selector', 'output', 'thinking_budget_tokens', 'classifier')
 ALLOW_ACTIVATION = 'auto_routing_policy_allow_project_activation'
+POLICY_ENABLED = 'auto_routing_policy_enabled'
+
+
+def policy_enabled(env_data):
+    """Platform switch: only a literal true serves the policy; off keeps the pre-policy contract."""
+    return env_data.get(POLICY_ENABLED) is True
 
 
 def _valid(model, value):
@@ -146,6 +152,10 @@ def policy_resolution(environment, project):
     for key, value in (override.model_dump(mode='json', exclude_unset=True) if override else {}).items():
         if key == 'shadow_mode' and value is False and policy[key] is True and not allow_activation:
             continue
+        if key == 'pool' and policy['pool'] is not None and (value is None or not set(value) <= set(policy['pool'])):
+            continue  # a project narrows the platform pool, never lifts or widens it
+        if key == 'fallback' and value is None and policy['fallback'] is not None:
+            continue
         policy[key] = {**policy[key], **value} if key in NESTED_POLICY_KEYS else value
         source[key] = 'project'
     output = policy['output']
@@ -187,13 +197,17 @@ def effective_settings(environment, project, low_tier=None, items=None):
     refs = classifier_refs(env_data, project_data, low_tier)
     fields['classifier'] = resolve_classifier(refs, items)
     # Platform policy merged with the project override; canonical JSON below makes it part of revision.
-    fields['policy'], policy_source, policy_issues = policy_resolution(environment, project)
+    # Served only while the platform switch is on, so the contract and revision stay as before until then.
+    serve_policy = policy_enabled(env_data)
+    if serve_policy:
+        fields['policy'], policy_source, policy_issues = policy_resolution(environment, project)
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
     # Why no classifier resolved; derived from the resolution above, so not part of revision.
     fields['classifier_reason'] = classifier_reason(fields['classifier'], refs, items)
-    fields['policy_source'] = policy_source
-    fields['policy_issues'] = policy_issues
-    fields['fallback_reason'] = fallback_reason(fields['policy'], items)
+    if serve_policy:
+        fields['policy_source'] = policy_source
+        fields['policy_issues'] = policy_issues
+        fields['fallback_reason'] = fallback_reason(fields['policy'], items)
     return fields
 
 
@@ -223,7 +237,7 @@ def get_classifier_state(project_id, user_id=None, *, check_availability=False):
     })
     low_tier = low_tier_ref(_project_secrets(project_id))
     refs = classifier_refs(_data(platform), _data(project), low_tier)
-    fallback = effective_policy(platform, project)[0]['fallback']
+    fallback = effective_policy(platform, project)[0]['fallback'] if policy_enabled(_data(platform)) else None
     items = None
     if check_availability or user_id is not None:
         items = _inventory(project_id, user_id) if refs or fallback else []

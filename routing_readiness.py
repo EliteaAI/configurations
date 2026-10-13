@@ -41,11 +41,12 @@ ISSUE_MESSAGES = {
 
 
 def models_auto_routing(gates, refs, items):
-    """The ``auto_routing`` block of the models listing."""
-    return {'enabled': gates['enabled'], 'revision': gates['revision'],
-            'profile_ref': {'id': 'v7-quality-cost', 'revision': 1},
-            'policy': gates['policy'], 'policy_source': gates['policy_source'],
-            'readiness': readiness(gates, refs, items)}
+    """The ``auto_routing`` block of the models listing; policy keys only while the platform serves a policy."""
+    block = {'enabled': gates['enabled'], 'revision': gates['revision'],
+             'profile_ref': {'id': 'v7-quality-cost', 'revision': 1}}
+    if 'policy' in gates:
+        block.update(policy=gates['policy'], policy_source=gates['policy_source'])
+    return {**block, 'readiness': readiness(gates, refs, items)}
 
 
 def readiness(settings, refs, items):

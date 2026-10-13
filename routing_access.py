@@ -9,6 +9,8 @@ from .tracing_access import current_actor_id, is_own_personal_project, is_projec
 ROUTING_FIELDS = ('auto_routing_available', 'auto_routing_project_default')
 CLASSIFIER_FIELD = 'auto_routing_classifier'
 POLICY_FIELD = 'auto_routing_policy'
+POLICY_ENABLED_FIELD = 'auto_routing_policy_enabled'
+MISSING = object()
 ALLOW_ACTIVATION_FIELD = 'auto_routing_policy_allow_project_activation'
 
 
@@ -26,6 +28,14 @@ def _validated_data(model, data):
     return result
 
 
+def _actor_items(project_id, actor):
+    from .routing_models import get_routing_models
+    try:
+        return get_routing_models(int(project_id), actor)['items']
+    except (TypeError, ValueError):
+        return []
+
+
 def _check_new_classifier(new, old, project_id, actor, *, shared_only=False, field='classifier'):
     """A new or changed reference must be a visible, available chat model (#6826).
 
@@ -34,14 +44,26 @@ def _check_new_classifier(new, old, project_id, actor, *, shared_only=False, fie
     """
     if new is None or new == old:
         return
-    from .routing_models import get_routing_models
     from .routing_readiness import find_model, usable_classifiers
-    try:
-        items = get_routing_models(int(project_id), actor)['items']
-    except (TypeError, ValueError):
-        items = []
+    items = _actor_items(project_id, actor)
     if find_model(usable_classifiers(items, shared_only=shared_only), new) is None:
         raise ConfigurationError(field, f"Model {new['name']} is not available to this project")
+
+
+def _check_pool_entries(new, old, project_id, actor, *, shared_only=False):
+    """A new or changed pool lists only visible deployments: canonical ids or exact names (#6722)."""
+    if not new or new == old:
+        return
+    known = set()
+    for model in _actor_items(project_id, actor):
+        if shared_only and model.get('shared') is not True:
+            continue
+        known.add(model.get('name'))
+        known.add((model.get('identity') or {}).get('canonical'))
+    unknown = list(dict.fromkeys(entry for entry in new if entry not in known))
+    if unknown:
+        listed = ', '.join(unknown[:5]) + (f' and {len(unknown) - 5} more' if len(unknown) > 5 else '')
+        raise ConfigurationError('policy.pool', f'Unknown model(s): {listed}')
 
 
 def _check_project_policy(new, old, project_id, actor):
@@ -70,6 +92,17 @@ def _check_project_policy(new, old, project_id, actor):
     if (new.get('shadow_mode') is False and old.get('shadow_mode') is not False
             and platform['shadow_mode'] is True and not allow_activation):
         raise ConfigurationError('policy.shadow_mode', 'The platform policy does not allow projects to leave shadow mode')
+    # A project may narrow the platform pool and choose its own fallback, never lift a platform restriction.
+    if 'pool' in new and new['pool'] != old.get('pool', MISSING) and platform['pool'] is not None:
+        if new['pool'] is None:
+            raise ConfigurationError('policy.pool', 'Projects cannot lift the platform pool restriction')
+        outside = [entry for entry in new['pool'] if entry not in platform['pool']]
+        if outside:
+            raise ConfigurationError('policy.pool', 'The project pool must be a subset of the platform pool: ' + ', '.join(outside[:5]))
+    if ('fallback' in new and new['fallback'] is None and old.get('fallback', MISSING) is not None
+            and platform['fallback'] is not None):
+        raise ConfigurationError('policy.fallback', 'Projects cannot remove the platform fallback')
+    _check_pool_entries(new.get('pool'), old.get('pool'), project_id, actor)
     selector, old_selector = new.get('selector') or {}, old.get('selector') or {}
     artifact_changed = 'artifact' in selector and ('artifact' not in old_selector or selector['artifact'] != old_selector['artifact'])
     if (new.get('shadow_mode') is not None and new['shadow_mode'] != old.get('shadow_mode')) or artifact_changed:
@@ -135,21 +168,25 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         merged.setdefault(CLASSIFIER_FIELD, old_data.get(CLASSIFIER_FIELD))
         merged.setdefault(POLICY_FIELD, old_data.get(POLICY_FIELD))
         merged.setdefault(ALLOW_ACTIVATION_FIELD, old_data.get(ALLOW_ACTIVATION_FIELD, False))
+        merged.setdefault(POLICY_ENABLED_FIELD, old_data.get(POLICY_ENABLED_FIELD, False))
         validated = _validated_data(EnvironmentSettings, merged)
         result['data'] = validated
     else:
         validated = old_data
     if (any(validated.get(key) is True for key in ROUTING_FIELDS) or validated.get(CLASSIFIER_FIELD)
-            or validated.get(POLICY_FIELD) or validated.get(ALLOW_ACTIVATION_FIELD) is True):
+            or validated.get(POLICY_FIELD) or validated.get(ALLOW_ACTIVATION_FIELD) is True
+            or validated.get(POLICY_ENABLED_FIELD) is True):
         if result.get('elitea_title', old.get('elitea_title')) != 'environment_settings':
             raise ConfigurationError('elitea_title', 'Platform Auto settings require the environment_settings record')
     classifier_changed = validated.get(CLASSIFIER_FIELD) != old_data.get(CLASSIFIER_FIELD)
     policy_changed = (validated.get(POLICY_FIELD) != old_data.get(POLICY_FIELD)
-                      or validated.get(ALLOW_ACTIVATION_FIELD, False) != old_data.get(ALLOW_ACTIVATION_FIELD, False))
+                      or validated.get(ALLOW_ACTIVATION_FIELD, False) != old_data.get(ALLOW_ACTIVATION_FIELD, False)
+                      or validated.get(POLICY_ENABLED_FIELD, False) != old_data.get(POLICY_ENABLED_FIELD, False))
     changed = classifier_changed or policy_changed or any(validated.get(key, False) != old_data.get(key, False) for key in ROUTING_FIELDS)
     removes_enabled = (deleting or result.get('elitea_title', old.get('elitea_title')) != old.get('elitea_title')) and (
         any(old_data.get(key) is True for key in ROUTING_FIELDS) or bool(old_data.get(CLASSIFIER_FIELD))
-        or bool(old_data.get(POLICY_FIELD)) or old_data.get(ALLOW_ACTIVATION_FIELD) is True)
+        or bool(old_data.get(POLICY_FIELD)) or old_data.get(ALLOW_ACTIVATION_FIELD) is True
+        or old_data.get(POLICY_ENABLED_FIELD) is True)
     if changed or removes_enabled:
         actor = current_actor_id()
         if int(project_id) != get_public_project_id() or not actor or not is_platform_admin(actor):
@@ -159,6 +196,8 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         if policy_changed:
             policy = validated.get(POLICY_FIELD) or {}
             _require_artifact(policy.get('shadow_mode'), (policy.get('selector') or {}).get('artifact'))
+        _check_pool_entries((validated.get(POLICY_FIELD) or {}).get('pool'),
+                            (old_data.get(POLICY_FIELD) or {}).get('pool'), project_id, actor, shared_only=True)
         _check_new_classifier((validated.get(POLICY_FIELD) or {}).get('fallback'),
                               (old_data.get(POLICY_FIELD) or {}).get('fallback'),
                               project_id, actor, shared_only=True, field='policy.fallback')

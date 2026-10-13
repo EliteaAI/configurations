@@ -35,6 +35,12 @@ class EnvironmentSettings(BaseModel):
         description="Platform default Auto routing policy (selector, fallback, output limits, thinking budgets). "
                     "Unset applies the built-in defaults.",
     )
+    auto_routing_policy_enabled: StrictBool = Field(
+        default=False,
+        title="Serve the Auto routing policy",
+        description="Off: the Gateway receives no policy and behaves as before the policy existed. "
+                    "On: every project receives the effective policy and the Gateway runs the selector in shadow mode.",
+    )
     auto_routing_policy_allow_project_activation: StrictBool = Field(
         default=False,
         title="Allow projects to leave Auto shadow mode",

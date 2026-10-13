@@ -43,3 +43,15 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # Rules shared with the Gateway: output caps floor 256, thinking budgets strictly increasing, shadow_mode false
 # needs a pinned selector.artifact (write refused; at merge shadow stays on and readiness reports
 # ACTIVATION_WITHOUT_ARTIFACT), selector.abstain defaults true.
+
+# Auto routing policy rollout switch (#6722): environment_settings.data.auto_routing_policy_enabled, default false.
+# While false, Configurations serves NO policy: the settings RPC and the models listing omit policy, policy_source,
+# policy_issues and fallback_reason, readiness ignores the fallback, and `revision` is exactly what it was before this
+# change (no pin rotation), so the Gateway behaves as on main. Turn it on in Administration (Auto Model Selection)
+# when the Gateway with the V5 selector is deployed. When it is on, Configurations always serves a complete policy
+# (defaults while none is stored), so EVERY project enters V5 shadow mode at once: the legacy policy still executes,
+# V5 is scored and traced next to it (expect extra scorer CPU per Auto request, inside the session lock), and
+# `revision` changes once (all routing pins rotate once). shadow_mode cannot switch shadow off per project; opt out
+# fleet-wide by turning auto_routing_policy_enabled off again (the revision returns to the pre-policy value).
+# Project overrides can narrow the platform pool and set their own fallback; they cannot lift a platform pool or
+# remove a platform fallback.

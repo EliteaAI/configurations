@@ -24,7 +24,8 @@ class _Strict(BaseModel):
 class SelectorPolicy(_Strict):
     artifact: str | None = Field(default=None, min_length=1, max_length=128, pattern=_ARTIFACT_ID,
                                  description='Pinned selector artifact id; must match the artifact installed in the Gateway.')
-    tau: StrictFloat = Field(default=0.85, ge=0.5, le=0.99, description='Minimum predicted pass probability.')
+    tau: StrictFloat = Field(default=0.85, ge=0.5, le=0.99, description='Minimum predicted pass probability. Values below 0.7 make the cheapest head '
+                                                                                   'win almost always; keep it high unless that is intended.')
     abstain: StrictBool = Field(default=True, description="Abstain to the fallback when qualified models are within "
                                                           "the selector's noise band.")
 
