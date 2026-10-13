@@ -36,10 +36,14 @@ def readiness(settings, refs, items):
     reasons = []
     if settings.get('enabled') is not True:
         reasons.append({'code': 'AUTO_DISABLED', 'message': 'Auto model selection is disabled for this project'})
+    fallback = settings.get('fallback_reason')
     used = settings.get('classifier')
     reason = classifier_reason(used, refs, items)
     if reason:
         reasons.append(reason)
+    # ready is false for an unresolvable policy.fallback only; an unset fallback or selector adds no reason.
+    if fallback:
+        reasons.append(fallback)
     if used:
         classifier = {**_described(used, items), 'available': True}
     elif refs:

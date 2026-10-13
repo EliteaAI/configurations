@@ -5,7 +5,7 @@ import json
 from pydantic import ValidationError
 
 from .common_utils import get_public_project_id
-from .models.pd.auto_routing import ClassifierRef, routing_enabled
+from .models.pd.auto_routing import AutoRoutingPolicy, AutoRoutingPolicyOverride, ClassifierRef, routing_enabled
 from .utils_getters import get_project_configuration
 
 
@@ -82,6 +82,64 @@ def classifier_reason(resolved, refs, items):
     return {'code': code, 'message': message, 'model': dict(ref)}
 
 
+def fallback_reason(policy, items):
+    """None when no fallback is configured, the inventory is unknown (no actor) or the fallback resolves."""
+    ref = _ref(policy.get('fallback'))
+    if not ref or items is None:
+        return None
+    problem = classifier_problem(find_model(items, ref))
+    if problem is None:
+        return None
+    message = (f"Fallback model {ref['name']} is not a chat model" if problem == 'CLASSIFIER_NOT_CHAT'
+               else f"Fallback model {ref['name']} is no longer available to this project")
+    return {'code': 'FALLBACK_UNAVAILABLE', 'message': message, 'model': dict(ref)}
+
+
+# --- Auto routing policy (#6722) -----------------------------------------------------------
+
+NESTED_POLICY_KEYS = ('selector', 'output', 'thinking_budget_tokens', 'classifier')
+ALLOW_ACTIVATION = 'auto_routing_policy_allow_project_activation'
+
+
+def _valid(model, value):
+    if value is None:
+        return None
+    try:
+        return model.model_validate(value)
+    except ValidationError:
+        return None
+
+
+def platform_policy(env_data):
+    """(complete platform policy, allow_project_activation, stored?) - an absent or malformed policy is the defaults."""
+    stored = _valid(AutoRoutingPolicy, env_data.get('auto_routing_policy'))
+    return (stored or AutoRoutingPolicy()).model_dump(mode='json'), env_data.get(ALLOW_ACTIVATION) is True, stored is not None
+
+
+def effective_policy(environment, project):
+    """Merge the platform policy with the project override: (policy, policy_source).
+
+    Per top-level key, an override wins; nested objects merge field by field and lists are replaced.
+    Platform limits hold at merge time as well as at write time: a project cannot exceed the platform
+    ``output.max_cap`` and leaves shadow mode only when the platform policy is not in shadow mode or
+    allows project activation. A malformed override is ignored as a whole (fails closed to the platform).
+    """
+    env_data, project_data = _data(environment), _data(project)
+    policy, allow_activation, stored = platform_policy(env_data)
+    source = dict.fromkeys(policy, 'platform' if stored else 'default')
+    platform_max_cap = policy['output']['max_cap']
+    override = _valid(AutoRoutingPolicyOverride, project_data.get('policy'))
+    for key, value in (override.model_dump(mode='json', exclude_unset=True) if override else {}).items():
+        if key == 'shadow_mode' and value is False and policy[key] is True and not allow_activation:
+            continue
+        policy[key] = {**policy[key], **value} if key in NESTED_POLICY_KEYS else value
+        source[key] = 'project'
+    output = policy['output']
+    output['max_cap'] = min(output['max_cap'], platform_max_cap)
+    output['min_cap'] = min(output['min_cap'], output['max_cap'])
+    return policy, source
+
+
 def effective_settings(environment, project, low_tier=None, items=None):
     """Only literal booleans grant availability; malformed records fail closed.
 
@@ -101,9 +159,13 @@ def effective_settings(environment, project, low_tier=None, items=None):
     # Project classifier, else project Low-tier model, else platform classifier (#6826 A1); covered by revision.
     refs = classifier_refs(env_data, project_data, low_tier)
     fields['classifier'] = resolve_classifier(refs, items)
+    # Platform policy merged with the project override; canonical JSON below makes it part of revision.
+    fields['policy'], policy_source = effective_policy(environment, project)
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
     # Why no classifier resolved; derived from the resolution above, so not part of revision.
     fields['classifier_reason'] = classifier_reason(fields['classifier'], refs, items)
+    fields['policy_source'] = policy_source
+    fields['fallback_reason'] = fallback_reason(fields['policy'], items)
     return fields
 
 
@@ -133,9 +195,10 @@ def get_classifier_state(project_id, user_id=None, *, check_availability=False):
     })
     low_tier = low_tier_ref(_project_secrets(project_id))
     refs = classifier_refs(_data(platform), _data(project), low_tier)
+    fallback = effective_policy(platform, project)[0]['fallback']
     items = None
     if check_availability or user_id is not None:
-        items = _inventory(project_id, user_id) if refs else []
+        items = _inventory(project_id, user_id) if refs or fallback else []
     return effective_settings(platform, project, low_tier, items), refs, items
 
 

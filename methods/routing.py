@@ -6,13 +6,17 @@ from ..utils import create_configuration, update_configuration
 from ..routing_access import current_actor_id, is_platform_admin
 from ..routing_models import get_routing_models
 from ..routing_readiness import classifier_options
+from ..routing_settings import ALLOW_ACTIVATION, platform_policy
 
 
 def platform_values(record):
     data = (record or {}).get('data') or {}
     return {'available': data.get('auto_routing_available') is True,
             'project_default': data.get('auto_routing_project_default') is True,
-            'classifier': data.get('auto_routing_classifier')}
+            'classifier': data.get('auto_routing_classifier'),
+            # Complete platform policy; the built-in defaults while none is stored.
+            'policy': platform_policy(data)[0],
+            'allow_project_activation': data.get(ALLOW_ACTIVATION) is True}
 
 
 class Method:
@@ -28,13 +32,20 @@ class Method:
         record = get_project_configuration(project_id, {'type': 'environment_settings', 'elitea_title': 'environment_settings'})
         if values is not None:
             flags = {'available', 'project_default'}
-            if not isinstance(values, dict) or not flags <= set(values) <= flags | {'classifier'} or any(type(values[key]) is not bool for key in flags):
+            optional = {'classifier', 'policy', 'allow_project_activation'}
+            if not isinstance(values, dict) or not flags <= set(values) <= flags | optional or any(
+                    type(values[key]) is not bool for key in flags | ({'allow_project_activation'} & set(values))):
                 raise ValueError('Both platform Auto flags must be booleans')
             data = {**((record or {}).get('data') or {}), 'auto_routing_available': values['available'],
                     'auto_routing_project_default': values['project_default']}
             if 'classifier' in values:
                 # Shape and visibility are validated by validate_routing_write (ConfigurationError 'classifier').
                 data['auto_routing_classifier'] = values['classifier']
+            if 'policy' in values:
+                # Strict schema, limits and fallback visibility are enforced by validate_routing_write.
+                data['auto_routing_policy'] = values['policy']
+            if 'allow_project_activation' in values:
+                data[ALLOW_ACTIVATION] = values['allow_project_activation']
             if record:
                 record = update_configuration(project_id, record['id'], {'data': data})
             else:

@@ -61,6 +61,7 @@ class API(APIBase):
             gates, refs, items = get_classifier_state(project_id, current_actor_id(), check_availability=True)
             result['auto_routing'] = {'enabled': gates['enabled'], 'revision': gates['revision'],
                 'profile_ref': {'id': 'v7-quality-cost', 'revision': 1},
+                'policy': gates['policy'], 'policy_source': gates['policy_source'],
                 'readiness': readiness(gates, refs, items)}
             result['default_selection'] = effective_default_selection(
                 VaultClient.from_project(project_id).get_secrets(), gates)

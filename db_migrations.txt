@@ -33,3 +33,10 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # fallback classifier. Projects with an available Low-tier model keep working on deploy without admin action.
 # For the others, set a fallback in Admin -> Features -> Auto Model Selection (a shared, fast model); until a
 # level resolves, Auto readiness reports CLASSIFIER_NOT_CONFIGURED (nothing set) or CLASSIFIER_UNAVAILABLE.
+
+# Auto routing policy (#6722): no migration. New optional JSONB fields default to null/false:
+# environment_settings.data.auto_routing_policy, environment_settings.data.auto_routing_policy_allow_project_activation
+# and auto_routing.data.policy (partial override, only the keys that were set). An absent policy resolves to the
+# built-in defaults (shadow_mode true, tau 0.85, output 8000/256/32000, thinking budgets 2048/4096/9092, greeting
+# rule on, no fallback), i.e. today's behaviour. The auto routing `revision` now also covers the effective policy,
+# so it changes once on deploy and routing pins are re-issued.

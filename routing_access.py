@@ -8,16 +8,25 @@ from .tracing_access import current_actor_id, is_own_personal_project, is_projec
 
 ROUTING_FIELDS = ('auto_routing_available', 'auto_routing_project_default')
 CLASSIFIER_FIELD = 'auto_routing_classifier'
+POLICY_FIELD = 'auto_routing_policy'
+ALLOW_ACTIVATION_FIELD = 'auto_routing_policy_allow_project_activation'
 
 
 def _validated_data(model, data):
     try:
-        return model.model_validate(data).model_dump()
+        parsed = model.model_validate(data)
     except ValidationError as exc:
         raise ConfigurationError('data', str(exc)) from exc
+    result = parsed.model_dump()
+    if getattr(parsed, 'policy', None) is not None:
+        # A project override keeps only the keys that were set, so "inherit" and an explicit null stay distinct.
+        result['policy'] = parsed.policy.model_dump(exclude_unset=True)
+    else:
+        result.pop('policy', None)
+    return result
 
 
-def _check_new_classifier(new, old, project_id, actor, *, shared_only=False):
+def _check_new_classifier(new, old, project_id, actor, *, shared_only=False, field='classifier'):
     """A new or changed reference must be a visible, available chat model (#6826).
 
     An unchanged saved reference is not re-checked: a classifier that became
@@ -32,7 +41,31 @@ def _check_new_classifier(new, old, project_id, actor, *, shared_only=False):
     except (TypeError, ValueError):
         items = []
     if find_model(usable_classifiers(items, shared_only=shared_only), new) is None:
-        raise ConfigurationError('classifier', f"Model {new['name']} is not available to this project")
+        raise ConfigurationError(field, f"Model {new['name']} is not available to this project")
+
+
+def _check_project_policy(new, old, project_id, actor):
+    """A changed project policy stays inside platform limits; a changed fallback must be usable (#6722).
+
+    Unchanged values are not re-checked: a platform that later lowers a limit is enforced at merge time
+    (routing_settings.effective_policy), and must not block unrelated saves.
+    """
+    new, old = new or {}, old or {}
+    if new == old:
+        return
+    from .routing_settings import _data, platform_policy
+    from .utils_getters import get_project_configuration
+    platform, allow_activation, _ = platform_policy(_data(get_project_configuration(
+        get_public_project_id(), {'type': 'environment_settings', 'elitea_title': 'environment_settings'})))
+    output, old_output = new.get('output') or {}, old.get('output') or {}
+    for key in ('min_cap', 'max_cap'):
+        if output.get(key) is not None and output[key] != old_output.get(key) and output[key] > platform['output']['max_cap']:
+            raise ConfigurationError(f'policy.output.{key}',
+                                     f"Project {key} cannot exceed the platform maximum of {platform['output']['max_cap']}")
+    if (new.get('shadow_mode') is False and old.get('shadow_mode') is not False
+            and platform['shadow_mode'] is True and not allow_activation):
+        raise ConfigurationError('policy.shadow_mode', 'The platform policy does not allow projects to leave shadow mode')
+    _check_new_classifier(new.get('fallback'), old.get('fallback'), project_id, actor, field='policy.fallback')
 
 
 def is_platform_admin(actor):
@@ -71,8 +104,10 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         if incoming is not None:
             merged = dict(incoming)
             merged.setdefault('classifier', old_data.get('classifier'))
+            merged.setdefault('policy', old_data.get('policy'))
             result['data'] = _validated_data(AutoRoutingProjectSettings, merged)
             _check_new_classifier(result['data']['classifier'], old_data.get('classifier'), project_id, actor)
+            _check_project_policy(result['data'].get('policy'), old_data.get('policy'), project_id, actor)
         return result
 
     if incoming is not None:
@@ -82,21 +117,30 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         for key in ROUTING_FIELDS:
             merged.setdefault(key, old_data.get(key, False))
         merged.setdefault(CLASSIFIER_FIELD, old_data.get(CLASSIFIER_FIELD))
+        merged.setdefault(POLICY_FIELD, old_data.get(POLICY_FIELD))
+        merged.setdefault(ALLOW_ACTIVATION_FIELD, old_data.get(ALLOW_ACTIVATION_FIELD, False))
         validated = _validated_data(EnvironmentSettings, merged)
         result['data'] = validated
     else:
         validated = old_data
-    if any(validated.get(key) is True for key in ROUTING_FIELDS) or validated.get(CLASSIFIER_FIELD):
+    if (any(validated.get(key) is True for key in ROUTING_FIELDS) or validated.get(CLASSIFIER_FIELD)
+            or validated.get(POLICY_FIELD) or validated.get(ALLOW_ACTIVATION_FIELD) is True):
         if result.get('elitea_title', old.get('elitea_title')) != 'environment_settings':
             raise ConfigurationError('elitea_title', 'Platform Auto settings require the environment_settings record')
     classifier_changed = validated.get(CLASSIFIER_FIELD) != old_data.get(CLASSIFIER_FIELD)
-    changed = classifier_changed or any(validated.get(key, False) != old_data.get(key, False) for key in ROUTING_FIELDS)
+    policy_changed = (validated.get(POLICY_FIELD) != old_data.get(POLICY_FIELD)
+                      or validated.get(ALLOW_ACTIVATION_FIELD, False) != old_data.get(ALLOW_ACTIVATION_FIELD, False))
+    changed = classifier_changed or policy_changed or any(validated.get(key, False) != old_data.get(key, False) for key in ROUTING_FIELDS)
     removes_enabled = (deleting or result.get('elitea_title', old.get('elitea_title')) != old.get('elitea_title')) and (
-        any(old_data.get(key) is True for key in ROUTING_FIELDS) or bool(old_data.get(CLASSIFIER_FIELD)))
+        any(old_data.get(key) is True for key in ROUTING_FIELDS) or bool(old_data.get(CLASSIFIER_FIELD))
+        or bool(old_data.get(POLICY_FIELD)) or old_data.get(ALLOW_ACTIVATION_FIELD) is True)
     if changed or removes_enabled:
         actor = current_actor_id()
         if int(project_id) != get_public_project_id() or not actor or not is_platform_admin(actor):
             raise ConfigurationError('data', 'Platform Auto model selection is managed by Administration admins')
         _check_new_classifier(validated.get(CLASSIFIER_FIELD), old_data.get(CLASSIFIER_FIELD),
                               project_id, actor, shared_only=True)
+        _check_new_classifier((validated.get(POLICY_FIELD) or {}).get('fallback'),
+                              (old_data.get(POLICY_FIELD) or {}).get('fallback'),
+                              project_id, actor, shared_only=True, field='policy.fallback')
     return result
