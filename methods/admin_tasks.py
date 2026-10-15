@@ -23,11 +23,11 @@ from copy import deepcopy
 from pylon.core.tools import log  # pylint: disable=E0611,E0401,W0611
 from pylon.core.tools import web  # pylint: disable=E0611,E0401,W0611
 from sqlalchemy import text, update
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm.attributes import flag_modified
 
 from tools import db, VaultClient
 from ..models.configuration import Configuration
+from ..generation_column import add_generation_column
 from ..common_utils import get_public_project_id
 from ..llm_model_profiles import reasoning_backfill_patch
 
@@ -386,11 +386,7 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                         continue
                     log.info("%sproject %s: configuration.generation is missing", prefix, project_id)
                     if not dry_run:
-                        quoted = postgresql.dialect().identifier_preparer.quote_schema(schema)
-                        session.execute(text(
-                            f"ALTER TABLE {quoted}.configuration "
-                            "ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1"
-                        ))
+                        add_generation_column(session, schema)
                         session.commit()
             except Exception:  # pylint: disable=W0703
                 log.exception("%sadd_configuration_generation_column: error in project %s", prefix, project_id)

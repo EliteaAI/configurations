@@ -4,6 +4,8 @@ from pylon.core.tools import module
 from tools import this, openapi_registry
 
 from .models.pd.registry import clear_config_type_registry
+from .generation_column import ensure_generation_column
+from .local_tools import db
 from .environment_settings_seed import ensure_default_environment_settings
 from .service_prompt_seed import ensure_default_service_prompts
 
@@ -16,6 +18,11 @@ class Module(module.ModuleModel):
     def init(self):
         log.info('Initializing configurations plugin')
         self.descriptor.init_all()
+        # The mapped generation column must exist before any query touches Configuration (#6943)
+        try:
+            ensure_generation_column(db)
+        except Exception as e:  # pylint: disable=W0703
+            log.error(f'configuration.generation guard failed: {e}')
 
     def ready(self):
         log.info('Ensuring default service prompts are present')
