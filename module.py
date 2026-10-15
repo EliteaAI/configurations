@@ -81,6 +81,10 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "backfill_llm_model_reasoning_profiles", backfill_reasoning, group="R-2.0.7",
             )
+            add_generation = self._wrap_admin_task(Method, "add_configuration_generation_column", self)
+            this.for_module("admin").module.register_admin_task(
+                "add_configuration_generation_column", add_generation, group="R-2.0.8",
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -98,6 +102,9 @@ class Module(module.ModuleModel):
             )
             this.for_module("admin").module.unregister_admin_task(
                 "backfill_llm_model_reasoning_profiles", self.backfill_llm_model_reasoning_profiles
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "add_configuration_generation_column", self.add_configuration_generation_column
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)
