@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
+from .auto_routing import ClassifierRef
+
 
 class EnvironmentSettings(BaseModel):
     model_config = ConfigDict(
@@ -21,6 +23,11 @@ class EnvironmentSettings(BaseModel):
         default=False,
         title="Enable Auto by default for projects",
         description="Project default while Auto model selection is enabled. Project admins may opt out or opt in.",
+    )
+    auto_routing_classifier: ClassifierRef | None = Field(
+        default=None,
+        title="Default Auto classifier",
+        description="Shared public model that classifies Auto requests for projects without their own classifier.",
     )
 
     system_sender_name: str = Field(

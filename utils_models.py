@@ -1,5 +1,6 @@
 from .common_utils import get_public_project_id
 from .folder_access import folder_exclusion_clause
+from .llm_model_identity import resolve_identity
 from .local_tools import db, VaultClient
 from .models.configuration import Configuration
 from .models.pd.llm_model import LlmModelList, EmbeddingModelList, VectorStorageModelList, ImageGenerationModelList, ASRModelList, TTSModelList
@@ -56,6 +57,13 @@ class LLMModelHandler(ConfigurationModelHandler):
 
     def fetch_configurations(self, session, project_id, filters, section):
         return self.get_query_method()(session, project_id, filters, section).all()
+
+    def validate_and_convert_model(self, config):
+        model_data = super().validate_and_convert_model(config)
+        model_data['identity'] = resolve_identity(
+            model_data['name'], api_protocol=model_data.get('api_protocol'),
+            explicit=getattr(config, 'canonical_model', None))
+        return model_data
 
 
 class EmbeddingModelHandler(ConfigurationModelHandler):
