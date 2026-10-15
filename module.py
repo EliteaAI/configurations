@@ -4,6 +4,8 @@ from pylon.core.tools import module
 from tools import this, openapi_registry
 
 from .models.pd.registry import clear_config_type_registry
+from .generation_column import ensure_generation_column
+from .local_tools import db
 from .environment_settings_seed import ensure_default_environment_settings
 from .service_prompt_seed import ensure_default_service_prompts
 
@@ -16,6 +18,11 @@ class Module(module.ModuleModel):
     def init(self):
         log.info('Initializing configurations plugin')
         self.descriptor.init_all()
+        # The mapped generation column must exist before any query touches Configuration (#6943)
+        try:
+            ensure_generation_column(db)
+        except Exception as e:  # pylint: disable=W0703
+            log.error(f'configuration.generation guard failed: {e}')
 
     def ready(self):
         log.info('Ensuring default service prompts are present')
@@ -81,6 +88,10 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "backfill_llm_model_reasoning_profiles", backfill_reasoning, group="R-2.0.7",
             )
+            add_generation = self._wrap_admin_task(Method, "add_configuration_generation_column", self)
+            this.for_module("admin").module.register_admin_task(
+                "add_configuration_generation_column", add_generation, group="R-2.0.8",
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -98,6 +109,9 @@ class Module(module.ModuleModel):
             )
             this.for_module("admin").module.unregister_admin_task(
                 "backfill_llm_model_reasoning_profiles", self.backfill_llm_model_reasoning_profiles
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "add_configuration_generation_column", self.add_configuration_generation_column
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)

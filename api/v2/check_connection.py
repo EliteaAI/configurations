@@ -85,7 +85,7 @@ class API(APIBase):
                 return {"success": True, **result}, 200
             else:
                 return {"success": False, "message": result}, 400
-        except LookupError as e:
+        except (LookupError, ValueError) as e:
             return {"success": False, "message": str(e)}, 400
         except Exception as e:
             log.error(f"Error checking connection for {config_type}: {str(e)}")
