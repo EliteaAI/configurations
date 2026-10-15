@@ -14,7 +14,7 @@ from sqlalchemy.dialects import postgresql
 _PROJECT_SCHEMA = re.compile(r'^p_\d+$')
 _SCHEMAS_MISSING_COLUMN = text(
     "SELECT t.table_schema FROM information_schema.tables t "
-    "WHERE t.table_name = 'configuration' AND NOT EXISTS ("
+    "WHERE t.table_name = 'configuration' AND t.table_schema LIKE 'p\\_%' AND NOT EXISTS ("
     "SELECT 1 FROM information_schema.columns c "
     "WHERE c.table_schema = t.table_schema AND c.table_name = 'configuration' "
     "AND c.column_name = 'generation')"
