@@ -4,6 +4,7 @@ from .common_utils import get_public_project_id
 from .exceptions import ConfigurationError
 from .models.pd.auto_routing import AutoRoutingProjectSettings
 from .models.pd.environment_settings import EnvironmentSettings
+from .models.pd.web_search_settings import WebSearchProjectSettings
 from .tracing_access import current_actor_id, is_own_personal_project, is_project_admin
 
 ROUTING_FIELDS = ('auto_routing_available', 'auto_routing_project_default')
@@ -46,6 +47,26 @@ def is_platform_admin(actor):
         return False
 
 
+def _validate_web_search_write(project_id, payload, deleting=False):
+    # The platform default lives in the public project; toolkit validity is checked when the toggle resolves it
+    result = dict(payload)
+    is_public = int(project_id) == int(get_public_project_id())
+    if deleting and not is_public:
+        return result
+    if not is_public:
+        raise ConfigurationError('type', 'Web Search settings are set in the public project only')
+    if result.get('shared') is True:
+        raise ConfigurationError('shared', 'Web Search settings belong to one project')
+    if result.get('elitea_title', 'web_search_settings') != 'web_search_settings':
+        raise ConfigurationError('elitea_title', 'Web Search settings use the ID web_search_settings')
+    actor = current_actor_id()
+    if not actor or not (is_project_admin(project_id, actor) or is_own_personal_project(project_id, actor)):
+        raise ConfigurationError('type', 'Web Search settings are managed by project admins')
+    if result.get('data') is not None:
+        result['data'] = _validated_data(WebSearchProjectSettings, result['data'])
+    return result
+
+
 def validate_routing_write(config_type, project_id, payload, *, existing=None, deleting=False):
     """Return a copy with validated routing data, never trust body author_id.
 
@@ -54,6 +75,8 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
     Administration project admin. Project overrides require their own admin
     or personal-project owner. RPCs without request identity cannot change them.
     """
+    if config_type == 'web_search_settings':
+        return _validate_web_search_write(project_id, payload, deleting=deleting)
     if config_type not in {'environment_settings', 'auto_routing'}:
         return payload
     result = dict(payload)
