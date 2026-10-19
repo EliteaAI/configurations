@@ -5,6 +5,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from .environment_settings import EnvironmentSettings
 from .auto_routing import AutoRoutingProjectSettings
+from .web_search_settings import WebSearchProjectSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .llm_model_connection import check_llm_model_connection
 from .project_context import ProjectContext
@@ -196,4 +197,10 @@ register_config_type(
     type_name='project_chat_config',
     section='project_settings',
     model=ProjectChatConfig,
+)
+
+register_config_type(
+    type_name='web_search_settings',
+    section='project_settings',
+    model=WebSearchProjectSettings,
 )

@@ -29,7 +29,7 @@ def modules(monkeypatch):
     getters.get_project_configuration = lambda *a, **k: None
     monkeypatch.setitem(sys.modules, getters.__name__, getters)
     loaded = {}
-    for name in ['exceptions', 'models.pd.environment_settings', 'models.pd.auto_routing', 'routing_access', 'routing_settings']:
+    for name in ['exceptions', 'models.pd.environment_settings', 'models.pd.auto_routing', 'models.pd.web_search_settings', 'routing_access', 'routing_settings']:
         spec = importlib.util.spec_from_file_location(PACKAGE + '.' + name, ROOT/(name.replace('.', '/') + '.py'))
         mod = importlib.util.module_from_spec(spec)
         monkeypatch.setitem(sys.modules, spec.name, mod)
