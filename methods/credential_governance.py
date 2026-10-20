@@ -101,7 +101,7 @@ class Method:
     def configuration_credential_facts(self, project_id: int, uuids: list) -> dict:
         """What a credential reference needs to know about configurations, by uuid. No data, no secrets.
 
-        ``{uuid: {id, project_id, type, section, generation}}`` for the uuids that exist in the project's schema.
+        ``{uuid: {id, project_id, type, section, generation, title}}`` for the uuids that exist in the project's schema.
         """
         if not isinstance(uuids, (list, tuple)) or len(uuids) > MAX_FACT_UUIDS:
             raise ValueError("at most %d configuration uuids per call" % MAX_FACT_UUIDS)
@@ -111,11 +111,11 @@ class Method:
         with db.get_session(project_id) as session:
             rows = session.query(
                 Configuration.uuid, Configuration.id, Configuration.project_id, Configuration.type,
-                Configuration.section, Configuration.generation,
+                Configuration.section, Configuration.generation, Configuration.elitea_title,
             ).filter(Configuration.uuid.in_(wanted)).all()
         return {
             str(row.uuid): {"id": row.id, "project_id": row.project_id, "type": row.type,
-                            "section": row.section, "generation": row.generation}
+                            "section": row.section, "generation": row.generation, "title": row.elitea_title}
             for row in rows
         }
 
