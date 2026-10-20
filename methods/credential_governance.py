@@ -2,8 +2,9 @@
 
 ``configuration_credential_facts`` is metadata only. ``configuration_secret_bundle`` returns secret
 material, so it answers only a store context minted by the credential onboarding service; the material
-is returned as ``SecretStr`` and never logged. Both are plain module methods (same process), not RPC:
-material must not cross the Redis bus.
+is returned as ``SecretStr`` and never logged. ``configuration_secret_fields`` (#6946) names the secret field
+paths of a type from its schema alone, with the walker the bundle uses. All are plain module methods (same
+process), not RPC: material must not cross the Redis bus.
 """
 import uuid
 from copy import deepcopy
@@ -17,6 +18,7 @@ from ..models.pd.registry import CONFIG_TYPE_REGISTRY
 from ..utils import _is_password_schema
 
 MAX_FACT_UUIDS = 64
+MAX_FIELD_TYPES = 256
 MAX_SCHEMA_DEPTH = 4
 BUNDLE_PURPOSES = frozenset({"onboard", "probe"})
 
@@ -41,6 +43,26 @@ def collect_secret_fields(properties, data, resolve, prefix="", depth=0) -> dict
         elif isinstance(value, dict) and depth < MAX_SCHEMA_DEPTH and isinstance(schema.get("properties"), dict):
             fields.update(collect_secret_fields(schema["properties"], value, resolve, f"{path}.", depth + 1))
     return fields
+
+
+def _placeholder_data(properties, depth=0) -> dict:
+    """A value for every property of a schema (nested objects as dicts), so ``collect_secret_fields`` can walk
+    the schema without a stored configuration. The placeholder is a constant, not a secret."""
+    data = {}
+    for name, schema in (properties or {}).items():
+        if not isinstance(schema, dict):
+            continue
+        nested = schema.get("properties")
+        if not _is_password_schema(schema) and isinstance(nested, dict) and depth < MAX_SCHEMA_DEPTH:
+            data[name] = _placeholder_data(nested, depth + 1)
+        else:
+            data[name] = "x"
+    return data
+
+
+def secret_field_paths(properties) -> list:
+    """The paths ``collect_secret_fields`` would return for a configuration that has every field set."""
+    return list(collect_secret_fields(properties, _placeholder_data(properties), lambda value: value))
 
 
 class Method:
@@ -96,3 +118,24 @@ class Method:
         if not fields:
             raise ValueError("NO_SECRET_FIELDS")
         return {"configuration_generation": generation, "fields": fields}
+
+    @web.method()
+    def configuration_secret_fields(self, types: list) -> dict:
+        """The secret field paths of configuration types, from their registered schemas. No database, no values.
+
+        ``{type: [path, ...]}`` for each registered type in ``types``; nested objects are joined with ``.`` and the
+        paths are exactly the field names ``configuration_secret_bundle`` returns for a configuration of that type
+        (same walker). A type without secret fields maps to ``[]``; an unregistered type is left out, so a caller
+        that needs every type to be known can tell. At most 256 names, ``ValueError`` otherwise.
+        """
+        if (
+                not isinstance(types, (list, tuple, set, frozenset)) or len(types) > MAX_FIELD_TYPES
+                or not all(isinstance(name, str) for name in types)
+        ):
+            raise ValueError("at most %d configuration type names per call" % MAX_FIELD_TYPES)
+        fields = {}
+        for name in types:
+            entry = CONFIG_TYPE_REGISTRY.get(name)
+            if entry is not None:
+                fields[name] = secret_field_paths((entry.config_schema or {}).get("properties"))
+        return fields
