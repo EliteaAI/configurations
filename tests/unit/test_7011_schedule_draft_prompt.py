@@ -2,13 +2,11 @@
 twelve schedule draft fields, keeping locked entities and treating user text as data."""
 
 import importlib.util
-import json
 import pathlib
 import sys
 import types
 
 import pytest
-
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PKG = "cfg_schedule_draft_prompt_test"
@@ -235,7 +233,5 @@ def test_approval_rule_default_mentioned(defaults):
     prompt = defaults.GENERATE_SCHEDULE_DRAFT_DEFAULT_PROMPT
     filled = prompt.format(**SLOTS)
 
-    filled_lower = filled.lower()
-    # Should mention pause_and_ask
     assert "pause_and_ask" in filled, \
         "Default approval rule 'pause_and_ask' not mentioned"
