@@ -11,7 +11,6 @@ import types
 
 import pytest
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PKG = "cfg_7011_seed_test"
 KEY = "generate_schedule_draft"
