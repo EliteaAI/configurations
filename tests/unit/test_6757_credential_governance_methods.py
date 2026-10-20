@@ -330,3 +330,105 @@ def test_nested_secrets_are_bounded_by_depth(methods):
     cursor['deep'] = '{{secret.k1}}'
     fields = methods.collect_secret_fields({'a': schema}, data, _Vault(1).unsecret)
     assert fields == {}
+
+
+# --- configuration_secret_fields (#6946) -------------------------------------------------------------------
+
+def _deep_schema(levels):
+    """An object chain ``a.child.child...`` with a password at the bottom, and the same chain with a public
+    sibling at every level."""
+    node = {'type': 'object', 'properties': {'public': {'type': 'string'}}}
+    top = {'properties': {'a': node}}
+    for _ in range(levels):
+        child = {'type': 'object', 'properties': {'public': {'type': 'string'}}}
+        node['properties']['child'] = child
+        node = child
+    node['properties']['deep'] = {'type': 'string', 'format': 'password'}
+    return top
+
+
+def _filled(properties):
+    """A stored configuration with every field set, built without the code under test."""
+    data = {}
+    for name, schema in properties.items():
+        if schema.get('format') == 'password' or any(
+                isinstance(option, dict) and option.get('format') == 'password' for option in schema.get('anyOf', [])):
+            data[name] = f'fixture-{name}'
+        elif isinstance(schema.get('properties'), dict):
+            data[name] = _filled(schema['properties'])
+        else:
+            data[name] = 'public-value'
+    return data
+
+
+def _registered_schemas():
+    """Every kind of schema the registry holds: the stub types, nested and anyOf passwords, a chain deeper than
+    the walker goes, and the schemas the SDK registers (``configurations_register`` receives these)."""
+    schemas = {
+        'api_cred': CONFIG_SCHEMA, 'plain': {'properties': {'url': {'type': 'string'}}}, 'no_schema': {},
+        'nested': {'properties': {'a': {'type': 'object', 'properties': {'b': {'type': 'object', 'properties': {
+            'c': {'type': 'string', 'format': 'password'}, 'd': {'anyOf': [
+                {'type': 'string', 'format': 'password'}, {'type': 'null'}]}}}, 'e': {'type': 'string'}}}}},
+        'deep': _deep_schema(8), 'shallow': _deep_schema(2),
+    }
+    sdk = pytest.importorskip('elitea_sdk.configurations')
+    schemas.update({f'sdk_{name}': schema for name, schema in sdk.AVAILABLE_CONFIGURATIONS.items()})
+    return schemas
+
+
+def test_secret_fields_are_the_password_paths_of_the_registered_schema_in_schema_order(methods):
+    fields = methods.Method.configuration_secret_fields(Self(), ['api_cred', 'plain', 'no_schema'])
+    assert fields == {'api_cred': ['api_key', 'token', 'oauth.client_secret'], 'plain': [], 'no_schema': []}
+
+
+def test_secret_fields_leave_out_unregistered_types_and_answer_only_what_was_asked(methods):
+    assert methods.Method.configuration_secret_fields(Self(), ['api_cred', 'unknown', 'api_cred']) == {
+        'api_cred': ['api_key', 'token', 'oauth.client_secret']}
+    assert methods.Method.configuration_secret_fields(Self(), []) == {}
+    assert methods.Method.configuration_secret_fields(Self(), {'plain'}) == {'plain': []}
+
+
+def test_secret_fields_read_no_row_and_resolve_nothing(methods, monkeypatch):
+    def forbidden(*_a, **_k):
+        raise AssertionError('no database and no vault')
+
+    monkeypatch.setattr(methods, 'db', SimpleNamespace(get_session=forbidden))
+    monkeypatch.setattr(methods, 'VaultClient', forbidden)
+    assert methods.Method.configuration_secret_fields(Self(), ['api_cred'])['api_cred'][0] == 'api_key'
+
+
+@pytest.mark.parametrize('bad', ['api_cred', None, [1], ['api_cred', None], {'api_cred': 1}, ['t'] * 257])
+def test_secret_fields_are_bounded_and_strict_about_the_names(methods, bad):
+    with pytest.raises(ValueError):
+        methods.Method.configuration_secret_fields(Self(), bad)
+
+
+def test_secret_fields_equal_what_the_bundle_returns_for_every_registered_type(methods, stores, monkeypatch):
+    schemas = _registered_schemas()
+    assert len(schemas) > 30
+    for name, schema in schemas.items():
+        monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, name, SimpleNamespace(config_schema=schema or None))
+    fields = methods.Method.configuration_secret_fields(Self(), list(schemas))
+    assert set(fields) == set(schemas)
+    nested = 0
+    for name, schema in schemas.items():
+        STATE['rows'] = {}
+        row = _row(type_=name, data=_filled(schema.get('properties') or {}))
+        try:
+            bundle = methods.Method.configuration_secret_bundle(
+                Self(), PROJECT, row.id, stores.AuthorizedStoreContext('onboard', PROJECT))
+        except ValueError as exc:
+            assert str(exc) == 'NO_SECRET_FIELDS' and fields[name] == [], name
+            continue
+        assert sorted(fields[name]) == sorted(bundle['fields']), name
+        nested += any('.' in path for path in fields[name])
+    assert nested == 3  # api_cred, nested, shallow; the chain of 8 is beyond the walker's depth bound
+
+
+def test_secret_fields_stop_where_the_bundle_walker_stops(methods, monkeypatch):
+    schema = _deep_schema(8)
+    monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'deep', SimpleNamespace(config_schema=schema))
+    assert methods.Method.configuration_secret_fields(Self(), ['deep']) == {'deep': []}
+    shallow = _deep_schema(2)
+    monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'shallow', SimpleNamespace(config_schema=shallow))
+    assert methods.Method.configuration_secret_fields(Self(), ['shallow']) == {'shallow': ['a.child.child.deep']}
