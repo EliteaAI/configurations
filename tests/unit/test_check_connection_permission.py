@@ -88,14 +88,16 @@ def _load(harness, filename):
     _module(f"{PACKAGE}.models.pd.registry", CONFIG_TYPE_REGISTRY={"azure_open_ai": FakeModel})
     _module(f"{PACKAGE}.utils", expand_configuration=lambda **_: None)
     # request.json is read at call time, after the test has set harness.json
-    request = type("Request", (), {"json": property(lambda _: harness.json)})()
+    request = type("Request", (), {"json": property(lambda _: harness.json), "args": {}})()
     _module("flask", request=request)
+    core = types.SimpleNamespace(module=types.SimpleNamespace(governance_profile=types.SimpleNamespace(enabled=False)))
     _module(
         "tools",
         auth=types.SimpleNamespace(
             decorators=types.SimpleNamespace(check_api=harness.check_api),
             current_user=lambda: {"id": 42},
         ),
+        this=types.SimpleNamespace(for_module=lambda name: core),  # governance off: legacy behaviour, unchanged
     )
 
     module_name = f"{PACKAGE}.api.v2.{filename}"
