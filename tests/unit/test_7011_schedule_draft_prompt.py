@@ -136,7 +136,7 @@ def test_json_example_has_exactly_twelve_fields(filled):
     ("R2.2", "TC-US20-14", "at most 2304 characters"),
     ("R2.2", "TC-US20-14", "- cron has five fields and uses the user's timezone unless the user names another one."),
     ("R2.2", "TC-US20-14", "- timezone is an IANA name, for example Europe/Berlin. Default to Europe/Berlin."),
-    ("R2.2", "TC-US20-14", '- approval_rule is "pause_and_ask" unless the user clearly asks for another rule.'),
+    ("R2.2", "TC-US20-14", '- approval_rule is "pause_and_ask" or "run_without_asking".'),
 ], ids=lambda v: v if v.startswith(("R", "TC")) else None)
 def test_filled_text_states_rule(filled, req, tc, rule):
     """R2.2-R2.5, TC-US20-13, TC-US20-14: the filled text carries the exact rule sentence."""
