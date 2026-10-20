@@ -98,6 +98,10 @@ CONFIG_SCHEMA = {
 }
 
 
+# the shape the SDK's OpenApiConfiguration.headers (Dict[str, SecretStr]) serializes to
+HEADERS_MAP = {'type': 'object', 'additionalProperties': {'type': 'string', 'format': 'password', 'writeOnly': True}}
+
+
 def _stub(name, **attrs):
     module = types.ModuleType(f'{PACKAGE}.{name}')
     module.__dict__.update(attrs)
@@ -347,13 +351,23 @@ def _deep_schema(levels):
     return top
 
 
+def _is_password(schema):
+    return schema.get('format') == 'password' or any(
+        isinstance(option, dict) and option.get('format') == 'password' for option in schema.get('anyOf', []))
+
+
 def _filled(properties):
     """A stored configuration with every field set, built without the code under test."""
     data = {}
     for name, schema in properties.items():
-        if schema.get('format') == 'password' or any(
-                isinstance(option, dict) and option.get('format') == 'password' for option in schema.get('anyOf', [])):
+        options = [schema, *[option for option in schema.get('anyOf', []) if isinstance(option, dict)]]
+        if _is_password(schema):
             data[name] = f'fixture-{name}'
+        elif any(isinstance(option.get('additionalProperties'), dict) and _is_password(option['additionalProperties'])
+                 for option in options):
+            data[name] = {'X-First': f'fixture-{name}-1', 'X-Second': f'fixture-{name}-2'}
+        elif any(isinstance(option.get('items'), dict) and _is_password(option['items']) for option in options):
+            data[name] = [f'fixture-{name}-1', f'fixture-{name}-2']
         elif isinstance(schema.get('properties'), dict):
             data[name] = _filled(schema['properties'])
         else:
@@ -370,6 +384,11 @@ def _registered_schemas():
             'c': {'type': 'string', 'format': 'password'}, 'd': {'anyOf': [
                 {'type': 'string', 'format': 'password'}, {'type': 'null'}]}}}, 'e': {'type': 'string'}}}}},
         'deep': _deep_schema(8), 'shallow': _deep_schema(2),
+        'headers_map': {'properties': {'base_url': {'type': 'string'}, 'headers': HEADERS_MAP}},
+        'optional_map': {'properties': {'headers': {'anyOf': [HEADERS_MAP, {'type': 'null'}]}}},
+        'nested_map': {'properties': {'auth': {'type': 'object', 'properties': {
+            'user': {'type': 'string'}, 'extra': HEADERS_MAP}}}},
+        'password_array': {'properties': {'tokens': {'type': 'array', 'items': {'type': 'string', 'format': 'password'}}}},
     }
     sdk = pytest.importorskip('elitea_sdk.configurations')
     schemas.update({f'sdk_{name}': schema for name, schema in sdk.AVAILABLE_CONFIGURATIONS.items()})
@@ -403,6 +422,21 @@ def test_secret_fields_are_bounded_and_strict_about_the_names(methods, bad):
         methods.Method.configuration_secret_fields(Self(), bad)
 
 
+def _expand(paths, data):
+    """The field names a configuration with ``data`` has under ``paths``: a ``<path>.*`` wildcard is every key of
+    the dict (every index of the list) at ``<path>``. Written independently of the code under test."""
+    names = []
+    for path in paths:
+        if not path.endswith('.*'):
+            names.append(path)
+            continue
+        node = data
+        for part in path[:-2].split('.'):
+            node = node[part]
+        names.extend(f'{path[:-1]}{key}' for key in (node if isinstance(node, dict) else range(len(node))))
+    return names
+
+
 def test_secret_fields_equal_what_the_bundle_returns_for_every_registered_type(methods, stores, monkeypatch):
     schemas = _registered_schemas()
     assert len(schemas) > 30
@@ -420,9 +454,11 @@ def test_secret_fields_equal_what_the_bundle_returns_for_every_registered_type(m
         except ValueError as exc:
             assert str(exc) == 'NO_SECRET_FIELDS' and fields[name] == [], name
             continue
-        assert sorted(fields[name]) == sorted(bundle['fields']), name
+        assert sorted(_expand(fields[name], row.data)) == sorted(bundle['fields']), name
         nested += any('.' in path for path in fields[name])
-    assert nested == 3  # api_cred, nested, shallow; the chain of 8 is beyond the walker's depth bound
+    # api_cred, nested, shallow, the SDK's openapi (headers.*) and the four map/array schemas; the chain of 8 is
+    # beyond the walker's depth bound
+    assert nested == 8
 
 
 def test_secret_fields_stop_where_the_bundle_walker_stops(methods, monkeypatch):
@@ -432,3 +468,71 @@ def test_secret_fields_stop_where_the_bundle_walker_stops(methods, monkeypatch):
     shallow = _deep_schema(2)
     monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'shallow', SimpleNamespace(config_schema=shallow))
     assert methods.Method.configuration_secret_fields(Self(), ['shallow']) == {'shallow': ['a.child.child.deep']}
+
+
+# --- maps and arrays of passwords (#6946) ------------------------------------------------------------------
+
+MAP_SCHEMAS = {
+    'headers_map': {'properties': {'base_url': {'type': 'string'}, 'headers': HEADERS_MAP}},
+    'optional_map': {'properties': {'headers': {'anyOf': [HEADERS_MAP, {'type': 'null'}]}}},
+    'nested_map': {'properties': {'auth': {'type': 'object', 'properties': {
+        'user': {'type': 'string'}, 'extra': HEADERS_MAP}}}},
+    'password_array': {'properties': {'tokens': {'type': 'array', 'items': {'type': 'string', 'format': 'password'}}}},
+    'mixed': {'properties': {'api_key': {'type': 'string', 'format': 'password'}, 'headers': HEADERS_MAP}},
+}
+
+
+@pytest.fixture
+def map_types(methods, monkeypatch):
+    for name, schema in MAP_SCHEMAS.items():
+        monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, name, SimpleNamespace(config_schema=schema))
+
+
+def test_secret_fields_name_a_map_or_array_of_passwords_with_a_wildcard(methods, map_types):
+    assert methods.Method.configuration_secret_fields(Self(), list(MAP_SCHEMAS)) == {
+        'headers_map': ['headers.*'], 'optional_map': ['headers.*'], 'nested_map': ['auth.extra.*'],
+        'password_array': ['tokens.*'], 'mixed': ['api_key', 'headers.*']}
+
+
+def _bundle(methods, stores, type_, data):
+    row = _row(type_=type_, data=data)
+    return methods.Method.configuration_secret_bundle(
+        Self(), PROJECT, row.id, stores.AuthorizedStoreContext('onboard', PROJECT))
+
+
+def test_bundle_names_every_map_entry_present_and_resolves_references(methods, stores, map_types):
+    result = _bundle(methods, stores, 'mixed', {
+        'api_key': '{{secret.k1}}', 'headers': {'X-API-Key': '{{secret.k2}}', 'X-Tenant-ID': 'literal-tenant'}})
+    assert set(result['fields']) == {'api_key', 'headers.X-API-Key', 'headers.X-Tenant-ID'}
+    assert all(isinstance(value, SecretStr) for value in result['fields'].values())
+    assert result['fields']['headers.X-API-Key'].get_secret_value() == 'fixture-token'
+    assert result['fields']['headers.X-Tenant-ID'].get_secret_value() == 'literal-tenant'
+    assert 'fixture-token' not in repr(result)
+
+
+@pytest.mark.parametrize('type_, data, expected', [
+    ('optional_map', {'headers': {'X-A': 'a-value'}}, {'headers.X-A'}),
+    ('optional_map', {'headers': None}, set()),
+    ('nested_map', {'auth': {'user': 'u', 'extra': {'X-B': 'b-value'}}}, {'auth.extra.X-B'}),
+    ('password_array', {'tokens': ['first', '', 'third']}, {'tokens.0', 'tokens.2'}),
+    ('headers_map', {'headers': {'X-Empty': '', 'X-None': None, 'X-Set': 'set-value'}}, {'headers.X-Set'}),
+])
+def test_bundle_map_and_array_entries(methods, stores, map_types, type_, data, expected):
+    if not expected:
+        with pytest.raises(ValueError, match='^NO_SECRET_FIELDS$'):
+            _bundle(methods, stores, type_, data)
+    else:
+        assert set(_bundle(methods, stores, type_, data)['fields']) == expected
+
+
+@pytest.mark.parametrize('headers', [{}, 'not-a-dict', 7])
+def test_bundle_of_an_empty_or_malformed_map_has_no_fields(methods, stores, map_types, headers):
+    with pytest.raises(ValueError, match='^NO_SECRET_FIELDS$'):
+        _bundle(methods, stores, 'headers_map', {'headers': headers})
+
+
+@pytest.mark.parametrize('entry', ['{{secret.missing}}', 12345, {'nested': 'x'}])
+def test_bundle_with_an_unresolved_map_entry_is_a_fixed_error_and_never_partial(methods, stores, map_types, entry):
+    with pytest.raises(ValueError) as caught:
+        _bundle(methods, stores, 'mixed', {'api_key': '{{secret.k1}}', 'headers': {'X-Good': 'ok', 'X-Bad': entry}})
+    assert str(caught.value) == 'SECRET_UNRESOLVED' and FIXTURE_SECRET not in repr(caught.value)

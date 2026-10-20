@@ -23,9 +23,34 @@ MAX_SCHEMA_DEPTH = 4
 BUNDLE_PURPOSES = frozenset({"onboard", "probe"})
 
 
+def _is_secret_collection(schema) -> bool:
+    """A schema (or an ``anyOf`` option of it) whose values are password strings keyed by name or position:
+    a map (``additionalProperties`` is a password schema, e.g. the SDK's ``Dict[str, SecretStr]``) or an array
+    (``items`` is). ``_process_secret_value`` seals the map at runtime; an array is not sealed there, so a
+    stored one is imported and sealed here rather than left as clear text."""
+    for option in (schema, *schema.get("anyOf", ())):
+        if isinstance(option, dict) and any(
+                isinstance(option.get(key), dict) and _is_password_schema(option[key])
+                for key in ("additionalProperties", "items")):
+            return True
+    return False
+
+
+def _resolved_secret(value, resolve):
+    """The plain text of a stored password value, ``None`` when it is empty. A value that stays a reference (or is
+    not text) is ``ValueError("SECRET_UNRESOLVED")``."""
+    if value in (None, ""):
+        return None
+    plain = resolve(value) if isinstance(value, str) else None
+    if not isinstance(plain, str) or (plain.startswith("{{secret.") and plain.endswith("}}")):
+        raise ValueError("SECRET_UNRESOLVED")
+    return plain or None
+
+
 def collect_secret_fields(properties, data, resolve, prefix="", depth=0) -> dict:
     """``{field path: SecretStr}`` for every password field of ``data`` that has a value, nested objects joined
-    with ``.``. ``resolve`` turns a stored ``{{secret.*}}`` reference into the value; a field that stays a
+    with ``.``. A map (or array) of passwords contributes one ``<name>.<key>`` (``<name>.<index>``) per entry
+    present. ``resolve`` turns a stored ``{{secret.*}}`` reference into the value; a field that stays a
     reference is an error (``ValueError("SECRET_UNRESOLVED")``): never partial material."""
     fields = {}
     for name, schema in (properties or {}).items():
@@ -33,13 +58,15 @@ def collect_secret_fields(properties, data, resolve, prefix="", depth=0) -> dict
             continue
         value, path = data[name], f"{prefix}{name}"
         if _is_password_schema(schema):
-            if value in (None, ""):
-                continue
-            plain = resolve(value) if isinstance(value, str) else None
-            if not isinstance(plain, str) or (plain.startswith("{{secret.") and plain.endswith("}}")):
-                raise ValueError("SECRET_UNRESOLVED")
+            plain = _resolved_secret(value, resolve)
             if plain:
                 fields[path] = SecretStr(plain)
+        elif _is_secret_collection(schema):
+            entries = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+            for key, item in entries:
+                plain = _resolved_secret(item, resolve)
+                if plain:
+                    fields[f"{path}.{key}"] = SecretStr(plain)
         elif isinstance(value, dict) and depth < MAX_SCHEMA_DEPTH and isinstance(schema.get("properties"), dict):
             fields.update(collect_secret_fields(schema["properties"], value, resolve, f"{path}.", depth + 1))
     return fields
@@ -47,13 +74,16 @@ def collect_secret_fields(properties, data, resolve, prefix="", depth=0) -> dict
 
 def _placeholder_data(properties, depth=0) -> dict:
     """A value for every property of a schema (nested objects as dicts), so ``collect_secret_fields`` can walk
-    the schema without a stored configuration. The placeholder is a constant, not a secret."""
+    the schema without a stored configuration. The placeholder is a constant, not a secret. A map or array of
+    passwords gets the single entry ``*``, which is how its paths come out as ``<name>.*``."""
     data = {}
     for name, schema in (properties or {}).items():
         if not isinstance(schema, dict):
             continue
         nested = schema.get("properties")
-        if not _is_password_schema(schema) and isinstance(nested, dict) and depth < MAX_SCHEMA_DEPTH:
+        if not _is_password_schema(schema) and _is_secret_collection(schema):
+            data[name] = {"*": "x"}
+        elif not _is_password_schema(schema) and isinstance(nested, dict) and depth < MAX_SCHEMA_DEPTH:
             data[name] = _placeholder_data(nested, depth + 1)
         else:
             data[name] = "x"
@@ -61,7 +91,8 @@ def _placeholder_data(properties, depth=0) -> dict:
 
 
 def secret_field_paths(properties) -> list:
-    """The paths ``collect_secret_fields`` would return for a configuration that has every field set."""
+    """The paths ``collect_secret_fields`` would return for a configuration that has every field set; a map or
+    array of passwords is the wildcard ``<name>.*``."""
     return list(collect_secret_fields(properties, _placeholder_data(properties), lambda value: value))
 
 
@@ -127,6 +158,12 @@ class Method:
         paths are exactly the field names ``configuration_secret_bundle`` returns for a configuration of that type
         (same walker). A type without secret fields maps to ``[]``; an unregistered type is left out, so a caller
         that needs every type to be known can tell. At most 256 names, ``ValueError`` otherwise.
+
+        Path grammar: ``name`` (a password field), ``a.b`` (nested object field), and the wildcard ``<path>.*``
+        for a map of passwords (every key of that dict, e.g. ``headers.*`` for OpenAPI headers) or an array of
+        passwords (every element). A consumer such as the elitea_core seal treats everything under ``<path>.*``
+        as secret; the bundle names those entries ``<path>.<key>`` (``<path>.<index>`` for an array), one per
+        entry present.
         """
         if (
                 not isinstance(types, (list, tuple, set, frozenset)) or len(types) > MAX_FIELD_TYPES
