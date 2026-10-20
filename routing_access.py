@@ -3,12 +3,14 @@ from pydantic import ValidationError
 from .common_utils import get_public_project_id
 from .exceptions import ConfigurationError
 from .models.pd.auto_routing import AutoRoutingProjectSettings
+from .models.pd.context_window_settings import ContextWindowProjectSettings
 from .models.pd.environment_settings import EnvironmentSettings
 from .models.pd.web_search_settings import WebSearchProjectSettings
 from .tracing_access import current_actor_id, is_own_personal_project, is_project_admin
 
 ROUTING_FIELDS = ('auto_routing_available', 'auto_routing_project_default')
 CLASSIFIER_FIELD = 'auto_routing_classifier'
+MANUAL_CONTEXT_FIELD = 'manual_max_context_tokens_enabled'
 
 
 def _validated_data(model, data):
@@ -67,6 +69,20 @@ def _validate_web_search_write(project_id, payload, deleting=False):
     return result
 
 
+def _validate_context_window_write(project_id, payload, deleting=False):
+    result = dict(payload)
+    if result.get('shared') is True:
+        raise ConfigurationError('shared', 'Context window settings belong to one project')
+    if result.get('elitea_title', 'context_window_settings') != 'context_window_settings':
+        raise ConfigurationError('elitea_title', 'Context window settings use the ID context_window_settings')
+    actor = current_actor_id()
+    if not actor or not (is_project_admin(project_id, actor) or is_own_personal_project(project_id, actor)):
+        raise ConfigurationError('type', 'Context window settings are managed by project admins')
+    if not deleting and result.get('data') is not None:
+        result['data'] = _validated_data(ContextWindowProjectSettings, result['data'])
+    return result
+
+
 def validate_routing_write(config_type, project_id, payload, *, existing=None, deleting=False):
     """Return a copy with validated routing data, never trust body author_id.
 
@@ -77,6 +93,8 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
     """
     if config_type == 'web_search_settings':
         return _validate_web_search_write(project_id, payload, deleting=deleting)
+    if config_type == 'context_window_settings':
+        return _validate_context_window_write(project_id, payload, deleting=deleting)
     if config_type not in {'environment_settings', 'auto_routing'}:
         return payload
     result = dict(payload)
@@ -105,10 +123,15 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         for key in ROUTING_FIELDS:
             merged.setdefault(key, old_data.get(key, False))
         merged.setdefault(CLASSIFIER_FIELD, old_data.get(CLASSIFIER_FIELD))
+        merged.setdefault(MANUAL_CONTEXT_FIELD, old_data.get(MANUAL_CONTEXT_FIELD, False))
         validated = _validated_data(EnvironmentSettings, merged)
         result['data'] = validated
     else:
         validated = old_data
+    if validated.get(MANUAL_CONTEXT_FIELD, False) != old_data.get(MANUAL_CONTEXT_FIELD, False):
+        actor = current_actor_id()
+        if int(project_id) != get_public_project_id() or not actor or not is_platform_admin(actor):
+            raise ConfigurationError('data', 'Manual Max Context Tokens is managed by Administration admins')
     if any(validated.get(key) is True for key in ROUTING_FIELDS) or validated.get(CLASSIFIER_FIELD):
         if result.get('elitea_title', old.get('elitea_title')) != 'environment_settings':
             raise ConfigurationError('elitea_title', 'Platform Auto settings require the environment_settings record')
