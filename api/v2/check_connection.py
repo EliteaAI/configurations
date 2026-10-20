@@ -8,6 +8,7 @@ from ...local_tools import APIBase, register_openapi, config as c
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 from ...utils import expand_configuration
 from ...local_tools import VaultClient
+from ...governed_probe import governed_check
 
 from tools import auth
 from pylon.core.tools import log
@@ -44,6 +45,11 @@ class API(APIBase):
              "description": "Project identifier."},
             {"name": "config_type", "in": "path", "schema": {"type": "string"},
              "description": "Configuration type to validate."},
+            {"name": "configuration_uuid", "in": "query", "required": False,
+             "schema": {"type": "string", "format": "uuid"},
+             "description": "Uuid of a saved credential. Only acted on when enterprise credential governance is "
+                            "enabled and the type is a credential: the saved credential is tested through the "
+                            "governed probe and the request body is ignored. Otherwise ignored."},
         ],
         request_body=CheckConnectionPayload,
         available_to_users=True,
@@ -59,6 +65,13 @@ class API(APIBase):
         if not model:
             return {"success": False, "message": f"Unknown configuration type: {config_type}"}, 404
         data = deepcopy(request.json)
+
+        governed = governed_check(
+            model, config_type, data, request.args.get('configuration_uuid'),
+            project_id, auth.current_user().get('id'),
+        )
+        if governed is not None:
+            return governed
 
         vc = VaultClient(project_id)
         data = vc.unsecret(data)
