@@ -14,7 +14,7 @@ from pylon.core.tools import web
 
 from ..local_tools import VaultClient, db
 from ..models.configuration import Configuration
-from ..models.pd.registry import CONFIG_TYPE_REGISTRY
+from ..models.pd.registry import CONFIG_TYPE_REGISTRY, registry_version
 from ..utils import _is_password_schema
 
 MAX_FACT_UUIDS = 64
@@ -96,12 +96,41 @@ def secret_field_paths(properties) -> list:
     return list(collect_secret_fields(properties, _placeholder_data(properties), lambda value: value))
 
 
+# type -> (registry version, registry entry, paths). The paths are a pure function of the registered schema, so one
+# schema walk per type serves every caller until the registry changes (the version) or that type is replaced (the
+# entry itself, kept by reference so a recycled id cannot match). Schema only: never material.
+_PATHS_CACHE: dict = {}
+
+
+def registered_secret_paths(type_name):
+    """The secret field paths of a registered type (memoized per ``(type, registry_version)``); ``None`` when the type
+    is not registered."""
+    entry = CONFIG_TYPE_REGISTRY.get(type_name)
+    if entry is None:
+        _PATHS_CACHE.pop(type_name, None)
+        return None
+    version = registry_version()
+    hit = _PATHS_CACHE.get(type_name)
+    if hit is None or hit[0] != version or hit[1] is not entry:
+        hit = _PATHS_CACHE[type_name] = (
+            version, entry, tuple(secret_field_paths((entry.config_schema or {}).get("properties"))))
+    return list(hit[2])
+
+
 class Method:
+    @web.method()
+    def configuration_registry_version(self) -> int:
+        """The registry version the secret-path cache keys on: it changes whenever a configuration type is
+        registered, replaced or removed, so a consumer that caches ``configuration_secret_fields`` answers can tell
+        when to drop them."""
+        return registry_version()
+
     @web.method()
     def configuration_credential_facts(self, project_id: int, uuids: list) -> dict:
         """What a credential reference needs to know about configurations, by uuid. No data, no secrets.
 
         ``{uuid: {id, project_id, type, section, generation, title}}`` for the uuids that exist in the project's schema.
+        One session and one statement for up to 64 uuids.
         """
         if not isinstance(uuids, (list, tuple)) or len(uuids) > MAX_FACT_UUIDS:
             raise ValueError("at most %d configuration uuids per call" % MAX_FACT_UUIDS)
@@ -172,7 +201,7 @@ class Method:
             raise ValueError("at most %d configuration type names per call" % MAX_FIELD_TYPES)
         fields = {}
         for name in types:
-            entry = CONFIG_TYPE_REGISTRY.get(name)
-            if entry is not None:
-                fields[name] = secret_field_paths((entry.config_schema or {}).get("properties"))
+            paths = registered_secret_paths(name)
+            if paths is not None:
+                fields[name] = paths
         return fields

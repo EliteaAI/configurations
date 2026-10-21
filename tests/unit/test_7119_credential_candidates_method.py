@@ -20,6 +20,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = 'configurations_7119_method_test'
 PROJECT, OTHER_PROJECT, BIG_PROJECT = 7, 8, 9
 FIXTURE_SECRET = 'fixture-secret-value'  # fake, test only
+REGISTRY_VERSION = [1]  # the stub registry's change counter; a test bumps it as register_config_type does
 FIXTURE_REFERENCE = '{{secret.fixture_key}}'
 ROW_KEYS = {
     'configuration_id', 'uuid', 'configuration_type', 'title', 'label', 'section', 'generation', 'shared',
@@ -98,7 +99,7 @@ def credential_facts():
         sys.modules[package.__name__] = package
     _stub('local_tools', db=SimpleNamespace(get_session=_get_session), VaultClient=object)
     _stub('models.configuration', Configuration=_Configuration)
-    _stub('models.pd.registry', CONFIG_TYPE_REGISTRY={
+    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], CONFIG_TYPE_REGISTRY={
         'api_cred': SimpleNamespace(config_schema=CONFIG_SCHEMA),
         'plain': SimpleNamespace(config_schema={'properties': {'url': {'type': 'string'}}}),
         'no_schema': SimpleNamespace(config_schema=None),
@@ -310,3 +311,32 @@ def test_search_limits(credential_facts):
     for bad in ('a' * 129, 5, ['x']):
         with pytest.raises(ValueError, match='INVALID_SEARCH'):
             _list(credential_facts, PROJECT, search=bad)
+
+
+# --- the facts read is one statement (perf review 2026-10-21, item 7) ---------------------------------------
+
+def test_facts_for_64_uuids_are_one_session_and_one_statement(credential_facts):
+    governance = sys.modules[f'{PACKAGE}.methods.credential_governance']
+    made = [_add(title=f'bulk-{n}') for n in range(64)]
+    STATEMENTS.clear()
+    SESSION_PROJECTS.clear()
+    result = governance.Method.configuration_credential_facts(Self(), PROJECT, [uuid for _, uuid in made])
+    assert len(result) == 64
+    assert all(set(facts) == {'id', 'project_id', 'type', 'section', 'generation', 'title'} for facts in result.values())
+    assert SESSION_PROJECTS == [PROJECT]
+    assert len(STATEMENTS) == 1 and STATEMENTS[0].lstrip().upper().startswith('SELECT')
+    assert 'configuration.data' not in STATEMENTS[0]  # metadata columns only
+
+
+def test_the_list_walks_each_type_schema_once_across_calls(credential_facts, monkeypatch):
+    governance = sys.modules[f'{PACKAGE}.methods.credential_governance']
+    governance._PATHS_CACHE.clear()
+    walks = []
+    real = governance.secret_field_paths
+    monkeypatch.setattr(governance, 'secret_field_paths', lambda properties: walks.append(1) or real(properties))
+    _add(type_='api_cred')
+    _add(type_='api_cred')
+    _add(type_='plain')
+    for _ in range(3):
+        assert len(_list(credential_facts, PROJECT)['rows']) == 3
+    assert len(walks) == 2  # api_cred and plain, once each, however many calls

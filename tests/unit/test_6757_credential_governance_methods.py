@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 PACKAGE = 'configurations_6757_test'
 PROJECT, OTHER_PROJECT = 7, 8
 FIXTURE_SECRET = 'fixture-secret-value'  # fake, test only
+REGISTRY_VERSION = [1]  # the stub registry's change counter; a test bumps it as register_config_type does
 
 
 class _Column:
@@ -128,7 +129,7 @@ def methods():
     db = SimpleNamespace(get_session=lambda project_id: _Session(STATE['rows'].get(project_id, [])))
     _stub('local_tools', db=db, VaultClient=_Vault)
     _stub('models.configuration', Configuration=_ConfigurationModel)
-    _stub('models.pd.registry', CONFIG_TYPE_REGISTRY={
+    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], CONFIG_TYPE_REGISTRY={
         'api_cred': SimpleNamespace(config_schema=CONFIG_SCHEMA),
         'plain': SimpleNamespace(config_schema={'properties': {'url': {'type': 'string'}}}),
         'no_schema': SimpleNamespace(config_schema=None),
@@ -544,3 +545,58 @@ def test_bundle_with_an_unresolved_map_entry_is_a_fixed_error_and_never_partial(
     with pytest.raises(ValueError) as caught:
         _bundle(methods, stores, 'mixed', {'api_key': '{{secret.k1}}', 'headers': {'X-Good': 'ok', 'X-Bad': entry}})
     assert str(caught.value) == 'SECRET_UNRESOLVED' and FIXTURE_SECRET not in repr(caught.value)
+
+
+# --- the secret-path cache (S2, perf review 2026-10-21) --------------------------------------------------------
+
+@pytest.fixture
+def walks(methods, monkeypatch):
+    """Counts the schema walks and starts every test from an empty cache."""
+    calls = []
+    real = methods.secret_field_paths
+    monkeypatch.setattr(methods, 'secret_field_paths', lambda properties: calls.append(properties) or real(properties))
+    methods._PATHS_CACHE.clear()
+    return calls
+
+
+def test_two_calls_for_the_same_types_walk_each_schema_once(methods, walks):
+    first = methods.Method.configuration_secret_fields(Self(), ['api_cred', 'plain', 'no_schema'])
+    second = methods.Method.configuration_secret_fields(Self(), ['api_cred', 'plain', 'no_schema'])
+    assert first == second == {
+        'api_cred': ['api_key', 'token', 'oauth.client_secret'], 'plain': [], 'no_schema': []}
+    assert len(walks) == 3  # one per type, not six
+    for _ in range(100):
+        methods.Method.configuration_secret_fields(Self(), ['api_cred'])
+    assert len(walks) == 3
+
+
+def test_a_cached_answer_cannot_be_changed_by_the_caller(methods, walks):
+    methods.Method.configuration_secret_fields(Self(), ['api_cred'])['api_cred'].append('injected')
+    assert 'injected' not in methods.Method.configuration_secret_fields(Self(), ['api_cred'])['api_cred']
+
+
+def test_a_registry_change_walks_again(methods, walks):
+    methods.Method.configuration_secret_fields(Self(), ['api_cred'])
+    REGISTRY_VERSION[0] += 1
+    methods.Method.configuration_secret_fields(Self(), ['api_cred'])
+    assert len(walks) == 2
+    assert methods.Method.configuration_registry_version(Self()) == REGISTRY_VERSION[0]
+
+
+def test_a_replaced_entry_is_not_answered_from_the_old_schema(methods, walks, monkeypatch):
+    schema = {'properties': {'a': {'type': 'string', 'format': 'password'}}}
+    monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'swapped', SimpleNamespace(config_schema=schema))
+    assert methods.Method.configuration_secret_fields(Self(), ['swapped']) == {'swapped': ['a']}
+    monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'swapped', SimpleNamespace(config_schema={'properties': {}}))
+    assert methods.Method.configuration_secret_fields(Self(), ['swapped']) == {'swapped': []}  # same version, new entry
+    assert len(walks) == 2
+
+
+def test_an_unregistered_type_is_left_out_and_not_cached(methods, walks, monkeypatch):
+    assert methods.Method.configuration_secret_fields(Self(), ['gone']) == {}
+    monkeypatch.setitem(methods.CONFIG_TYPE_REGISTRY, 'gone', SimpleNamespace(config_schema={'properties': {
+        'k': {'type': 'string', 'format': 'password'}}}))
+    assert methods.Method.configuration_secret_fields(Self(), ['gone']) == {'gone': ['k']}
+    monkeypatch.delitem(methods.CONFIG_TYPE_REGISTRY, 'gone')
+    assert methods.Method.configuration_secret_fields(Self(), ['gone']) == {}
+    assert 'gone' not in methods._PATHS_CACHE

@@ -104,3 +104,27 @@ def test_check_connection_keeps_a_success_warning(monkeypatch):
     warned = {"success": True, "message": "ok", "warning": "The api_key has leading/trailing whitespace"}
     assert entry.check_connection({"result": warned}) == warned
     assert entry.check_connection({"result": {"success": True, "message": "ok"}}) is None
+
+
+def test_registry_version_changes_on_every_registry_change(monkeypatch):
+    registry = _load_registry(monkeypatch)
+    seen = [registry.registry_version()]
+    registry.register_config_type("mcp_v", "toolkits", validation_func="validate", config_schema={"type": "object"})
+    seen.append(registry.registry_version())
+    registry.register_config_type(
+        "mcp_v", "toolkits", validation_func="validate", config_schema={"type": "object", "a": 1}, replace=True)
+    seen.append(registry.registry_version())
+    assert registry.unregister_config_type("mcp_v") is True
+    seen.append(registry.registry_version())
+    registry.clear_config_type_registry()
+    seen.append(registry.registry_version())
+    assert seen == sorted(set(seen))  # strictly increasing: every change bumped it
+
+
+def test_registry_version_is_stable_when_nothing_changed(monkeypatch):
+    registry = _load_registry(monkeypatch)
+    registry.register_config_type("mcp_v", "toolkits", validation_func="validate", config_schema={"type": "object"})
+    version = registry.registry_version()
+    assert registry.unregister_config_type("nothing_registered") is False  # no change
+    registry.register_config_type("mcp_v", "toolkits", config_schema={"x": 1}, replace=True)  # fails validation
+    assert registry.registry_version() == version
