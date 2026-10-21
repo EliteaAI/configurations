@@ -19,7 +19,7 @@ class RPC:
     def configurations_register(self,
         type_name: str, section: str, model: type[BaseModel] = None, config_schema: Optional[dict] = None,
         validation_func: Optional[str] = None, check_connection_func: Optional[str] = None,
-        replace: bool = False,
+        replace: bool = False, managed_by: str | None = None, manage_url: str | None = None,
     ):
         return register_config_type(
             type_name=type_name,
@@ -29,6 +29,8 @@ class RPC:
             config_schema=config_schema,
             check_connection_func=check_connection_func,
             replace=replace,
+            managed_by=managed_by,
+            manage_url=manage_url,
         )
 
     @web.rpc('configurations_unregister')
