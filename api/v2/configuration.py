@@ -5,6 +5,7 @@ from ...exceptions import ConfigurationError
 from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
+from ...models.pd.registry import managed_configuration_error
 from ...tracing_access import can_manage_tracing, is_tracing_type
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 from ...folder_access import require_folder_access
@@ -25,6 +26,18 @@ def read_configuration_type(project_id: int, config_id: int) -> str | None:
         return session.query(Configuration.type).filter_by(
             id=config_id, project_id=project_id
         ).scalar()
+
+
+def refuse_write(project_id: int, config_id: int) -> tuple[dict, int] | None:
+    """The error answer when the stored type forbids this REST write; None when the write goes on."""
+    # The stored type is authoritative - ConfigurationUpdate cannot carry one
+    config_type = read_configuration_type(project_id, config_id)
+    if deny_tracing_access(project_id, config_type):
+        return TRACING_DENIED, 403
+    managed = managed_configuration_error(config_type)
+    if managed:
+        return managed, 409
+    return None
 
 
 class API(APIBase):
@@ -107,9 +120,9 @@ class API(APIBase):
     )
     @require_folder_access('config_id', write=True)
     def put(self, project_id: int, config_id: int, **kwargs):
-        # The stored type is authoritative - ConfigurationUpdate cannot carry one
-        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
-            return TRACING_DENIED, 403
+        refused = refuse_write(project_id, config_id)
+        if refused:
+            return refused
         try:
             parsed = ConfigurationUpdate.model_validate(request.json)
         except Exception as e:
@@ -153,8 +166,9 @@ class API(APIBase):
     @require_folder_access('config_id', write=True)
     def delete(self, project_id: int, config_id: int, **kwargs):
         # Gated too: deleting the admin's credential silently stops project tracing
-        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
-            return TRACING_DENIED, 403
+        refused = refuse_write(project_id, config_id)
+        if refused:
+            return refused
         try:
             result = delete_configuration(project_id, config_id)
         except ConfigurationError as ce:
