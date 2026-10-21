@@ -23,6 +23,8 @@ class ConfigTypeRegistryItem(BaseModel):
     validation_func: Optional[str] = None  # Name of validation function to call via RPC if no model
     config_schema: dict[str, Any] | None = None  # Optional schema for the model
     check_connection_func: Optional[str] = None  # Name of check connection function to call via RPC if no model
+    managed_by: str | None = None  # Owner plugin: the REST API refuses writes, the owner writes through RPC
+    manage_url: str | None = None  # Where a client changes the owned records instead
 
     @model_validator(mode='after')
     def check_model_or_func(self):
@@ -118,10 +120,11 @@ def clear_config_type_registry():
 
 
 def register_config_type(type_name: str, section: str, model=None, validation_func=None, config_schema=None,
-                         check_connection_func=None, replace=False):
+                         check_connection_func=None, replace=False, managed_by=None, manage_url=None):
     """
     Register a new configuration type in CONFIG_TYPE_REGISTRY.
     User may provide either a model or a validation_func name (str).
+    A managed_by owner makes the REST API refuse writes of the type; see managed_configuration_error.
     Raises ValueError if type_name already exists and replacement was not requested.
 
     Replacement is transactional: the existing entry remains registered when
@@ -136,7 +139,9 @@ def register_config_type(type_name: str, section: str, model=None, validation_fu
             model=model,
             validation_func=validation_func,
             config_schema=config_schema,
-            check_connection_func=check_connection_func
+            check_connection_func=check_connection_func,
+            managed_by=managed_by,
+            manage_url=manage_url,
         )
         item = ConfigTypeRegistryItem.model_validate(item.model_dump(exclude_unset=True))
         log.info(f'Registering config: {item}')
@@ -152,6 +157,19 @@ def unregister_config_type(type_name: str) -> bool:
     if removed:
         _registry_changed()
     return removed
+
+
+def managed_configuration_error(type_name: str | None) -> dict | None:
+    """The 409 body for a REST write of a type another plugin owns; None when the REST API may write it."""
+    entry = CONFIG_TYPE_REGISTRY.get(type_name) if type_name else None
+    if not entry or not entry.managed_by:
+        return None
+    where = entry.manage_url or f'the {entry.managed_by} API'
+    return {
+        'code': 'managed_configuration',
+        'error': f'{type_name} is managed by {entry.managed_by}; change it through {where}',
+        'manage_url': entry.manage_url,
+    }
 
 
 LlmModel.check_connection = staticmethod(check_llm_model_connection)
