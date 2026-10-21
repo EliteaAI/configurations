@@ -32,8 +32,8 @@ class _Column:
 
 
 class _ConfigurationModel:
-    uuid, id, project_id, type, section, generation = (
-        _Column(n) for n in ('uuid', 'id', 'project_id', 'type', 'section', 'generation'))
+    uuid, id, project_id, type, section, generation, elitea_title = (
+        _Column(n) for n in ('uuid', 'id', 'project_id', 'type', 'section', 'generation', 'elitea_title'))
 
 
 class _Query:
@@ -169,9 +169,10 @@ def _reset():
     yield
 
 
-def _row(project_id=PROJECT, type_='api_cred', section='credentials', generation=3, data=None, id_=11):
+def _row(project_id=PROJECT, type_='api_cred', section='credentials', generation=3, data=None, id_=11,
+         title='github-pat'):
     row = SimpleNamespace(
-        id=id_, uuid=uuidlib.uuid4(), project_id=project_id, type=type_, section=section, generation=generation,
+        id=id_, uuid=uuidlib.uuid4(), project_id=project_id, type=type_, section=section, generation=generation, elitea_title=title,
         data=data if data is not None else {
             'url': 'https://example.invalid', 'api_key': '{{secret.k1}}',
             'oauth': {'client_id': 'public-id', 'client_secret': '{{secret.k3}}'}})
@@ -190,9 +191,16 @@ def test_facts_are_metadata_only_and_keyed_by_uuid(methods):
     other = _row(id_=12)
     result = methods.Method.configuration_credential_facts(Self(), PROJECT, [str(row.uuid)])
     assert result == {str(row.uuid): {'id': 11, 'project_id': PROJECT, 'type': 'api_cred', 'section': 'credentials',
-                                      'generation': 3}}
+                                      'generation': 3, 'title': 'github-pat'}}
+    assert set(result[str(row.uuid)]) == {'id', 'project_id', 'type', 'section', 'generation', 'title'}
     assert str(other.uuid) not in result
     assert 'data' not in result[str(row.uuid)] and FIXTURE_SECRET not in repr(result)
+
+
+def test_facts_title_is_none_when_the_configuration_has_none(methods):
+    row = _row(title=None)
+    result = methods.Method.configuration_credential_facts(Self(), PROJECT, [str(row.uuid)])
+    assert result[str(row.uuid)]['title'] is None
 
 
 def test_facts_for_unknown_uuid_and_empty_list(methods):
