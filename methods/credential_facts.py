@@ -12,8 +12,7 @@ from pylon.core.tools import web
 from ..governed_probe import CREDENTIALS_SECTION
 from ..local_tools import db
 from ..models.configuration import Configuration
-from ..models.pd.registry import CONFIG_TYPE_REGISTRY
-from .credential_governance import secret_field_paths
+from .credential_governance import registered_secret_paths, secret_field_paths  # pylint: disable=W0611
 
 DEFAULT_LIST_LIMIT = 20
 MAX_LIST_LIMIT = 100
@@ -35,9 +34,7 @@ def _like_pattern(search: str) -> str:
 
 def _has_secret_fields(config_type: str, cache: dict) -> bool:
     if config_type not in cache:
-        entry = CONFIG_TYPE_REGISTRY.get(config_type)
-        schema = (entry.config_schema or {}) if entry is not None else {}
-        cache[config_type] = bool(secret_field_paths(schema.get("properties")))
+        cache[config_type] = bool(registered_secret_paths(config_type))
     return cache[config_type]
 
 
