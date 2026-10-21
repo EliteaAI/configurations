@@ -6,6 +6,7 @@ from pydantic import BaseModel, field_validator, model_validator
 from .environment_settings import EnvironmentSettings
 from .auto_routing import AutoRoutingProjectSettings
 from .web_search_settings import WebSearchProjectSettings
+from .context_window_settings import ContextWindowProjectSettings
 from .llm_model import LlmModel, EmbeddingModel, ImageGenerationModel, ASRModel, TTSModel
 from .llm_model_connection import check_llm_model_connection
 from .project_context import ProjectContext
@@ -212,6 +213,12 @@ register_config_type(
     type_name='auto_routing',
     section='project_settings',
     model=AutoRoutingProjectSettings,
+)
+
+register_config_type(
+    type_name='context_window_settings',
+    section='project_settings',
+    model=ContextWindowProjectSettings,
 )
 
 register_config_type(
