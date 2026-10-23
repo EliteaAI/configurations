@@ -188,7 +188,8 @@ def test_el7011_cr_rest_update_of_an_owned_record_is_refused(harness):
 
 def test_el7011_cr_rest_delete_of_an_owned_record_is_refused(harness):
     harness.stored_type = OWNED
-    assert harness.load("configuration").delete(project_id=7, config_id=5) == (REFUSED, 409)
+    result = harness.load("configuration").delete(project_id=7, config_id=5)
+    assert result == (REFUSED, 409)
     assert harness.store_calls == []
 
 
@@ -196,8 +197,10 @@ def test_el7011_cr_rest_update_and_delete_of_a_plugin_type_go_on(harness):
     harness.stored_type = "project_context"
     harness.json = {"data": {}}
     api = harness.load("configuration")
-    assert api.put(project_id=7, config_id=5)[1] == 200
-    assert api.delete(project_id=7, config_id=5)[1] == 204
+    put_result = api.put(project_id=7, config_id=5)
+    delete_result = api.delete(project_id=7, config_id=5)
+    assert put_result[1] == 200
+    assert delete_result[1] == 204
     assert harness.store_calls == ["update", "delete"]
 
 
