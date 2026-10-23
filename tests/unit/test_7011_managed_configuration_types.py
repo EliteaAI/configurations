@@ -114,12 +114,13 @@ class Harness:
                 db=types.SimpleNamespace(get_session=lambda _project_id: Session()),
                 config=types.SimpleNamespace(ADMINISTRATION_MODE="administration", DEFAULT_MODE="default"),
                 rpc_manager=None)
-        _module(f"{API_PACKAGE}.models.configuration", Configuration=types.SimpleNamespace(type="type"))
+        _module(f"{API_PACKAGE}.models.configuration", Configuration=types.SimpleNamespace(type="type", data="data"))
         _module(f"{API_PACKAGE}.models.pd.configuration", ConfigurationCreateBase=model,
                 ConfigurationDetails=model, ConfigurationUpdate=model)
         _module(f"{API_PACKAGE}.models.pd.registry",
                 managed_configuration_error=self.registry.managed_configuration_error)
         _module(f"{API_PACKAGE}.tracing_access", can_manage_tracing=lambda *_: True,
+                can_manage_stored_login=lambda *_: True, stored_login_changed=lambda *_: False,
                 is_tracing_type=lambda _type: False)
         _module(f"{API_PACKAGE}.utils", get_configurations=record("list", {}),
                 create_configuration=record("create", {"id": 1}),
