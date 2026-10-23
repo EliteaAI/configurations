@@ -40,3 +40,13 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 #   add_configuration_generation_column  param: project_id=all
 # Run it before the release that reads the column is deployed. Idempotent; new projects get the column from
 # the model.
+
+# Project Context prompts length buffer (#7129): project_context_generator and edit_project_context_draft now ask
+# for a Project Background of up to 2400 characters (hard cap stays 2500), so drafts stop overshooting the cap.
+# The boot seed never updates existing rows; upgrade them from an admin task (Administration -> Tasks), dry run
+# first, then live:
+#   migrate_service_prompt_project_context  param: dry_run
+#   migrate_service_prompt_project_context  param:
+# Only rows still on a past default are rewritten; customized prompts are reported under skipped_custom and left
+# for an admin. Idempotent. Dev already holds hand-edited 2400 versions: if they report skipped_custom, compare
+# them with the new default and re-run after resetting, or leave them as they are.

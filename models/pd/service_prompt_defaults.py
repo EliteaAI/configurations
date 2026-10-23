@@ -1181,7 +1181,7 @@ Field requirements:
 
 2. project_background
 - Must be written in Markdown.
-- Maximum length: 2500 characters.
+- Maximum length: 2400 characters.
 - Must be clear, structured, and useful as reusable project context.
 - Must be based on the user's provided information.
 - Should organize information into meaningful sections when appropriate.
@@ -1220,6 +1220,163 @@ Apply the user's request and produce the COMPLETE updated Project Context as a s
 with exactly these keys:
 {{
   "activation_description": "<when user requests should load this context, max 300 characters>",
+  "project_background": "<the full updated Project Background in Markdown, max 2400 characters>"
+}}
+
+Rules:
+- Return the ENTIRE updated activation description and Project Background.
+- The activation description must concisely classify relevant user intent without repeating the full background.
+- Return the ENTIRE updated Project Background, not just the changed part.
+- If the user asks to improve/refine/rework the context in general, or gives a brief or vague
+  request (e.g. "make it better", "improve it", "do something useful"), rewrite the whole
+  Project Background so it becomes genuinely clearer, better structured and more useful. In
+  this case NEVER return the current content unchanged.
+- When the user asks for a specific, scoped change (e.g. "add a testing section", "shorten
+  the overview"), apply that change and preserve the rest of the content as-is.
+- Always build on the current content above; keep the project's original intent and existing
+  facts when they are clear, and do not invent specific facts unless reasonably implied.
+- Must be written in Markdown and stay within 2400 characters.
+- Must not include suggested tools, agents, pipelines, toolkits, MCPs, or resources.
+- Must not include secrets, credentials, tokens, passwords, or unsafe instructions.
+- Return ONLY the JSON object — no prose, no code fences, no extra keys."""
+
+
+# PROJECT_CONTEXT_*_DEFAULT_PROMPT_V1 / _V2 are frozen copies of past defaults: V1 predates the
+# activation description (#5326), V2 asked for a 2500-char background - the hard cap, so drafts
+# often overshot it (#7129). Kept only so migrate_service_prompt_project_context in
+# configurations/methods/admin_tasks.py can tell a seeded row from a customized one. Never edit them.
+PROJECT_CONTEXT_GENERATOR_DEFAULT_PROMPT_V1 = """You are an assistant that generates EliteA Project Context drafts based on the user's natural-language description.
+
+Your task is to generate Project Background content for a project.
+
+Project Background is used by EliteA to provide better, more accurate, and project-specific AI responses. It may include architecture, design decisions, workflows, terminology, processes, constraints, testing rules, development practices, deployment details, or other important project-specific information.
+
+Return only valid JSON. Do not include explanations, comments, markdown fences, or extra text.
+
+The response must match this JSON structure:
+
+{
+  "project_background": ""
+}
+
+Field requirements:
+
+1. project_background
+- Must be written in Markdown.
+- Maximum length: 2500 characters.
+- Must be clear, structured, and useful as reusable project context.
+- Must be based on the user's provided information.
+- Should organize information into meaningful sections when appropriate.
+- Should avoid generic filler text.
+- Should not invent specific facts unless they are reasonably implied by the user input.
+- Must not include suggested tools, agents, pipelines, toolkits, MCPs, or resources.
+- Must not include secrets, credentials, tokens, passwords, or unsafe instructions.
+
+Recommended Markdown structure when relevant:
+- Project Overview
+- Architecture
+- Key Components
+- Development Process
+- Testing Approach
+- Deployment / Environment Notes
+- Important Rules or Constraints
+- Terminology
+
+Generation rules:
+- Generate only Project Background content.
+- Keep it concise and useful.
+- If the user request is vague, create a reasonable general-purpose project context based on the available information.
+- Ensure the response is valid JSON and can be parsed directly."""
+
+EDIT_PROJECT_CONTEXT_DRAFT_DEFAULT_PROMPT_V1 = """You are a Project Context refinement assistant for the Elitea platform. The user wants to MODIFY the existing Project Background content.
+
+Project Background is used by EliteA to provide better, more accurate, and project-specific AI responses. It may include architecture, design decisions, workflows, terminology, processes, constraints, testing rules, development practices, deployment details, or other important project-specific information.
+
+Current Project Context:
+{current_config}
+
+Apply the user's request and produce the COMPLETE updated Project Background as a single JSON object
+with exactly this key:
+{{
+  "project_background": "<the full updated Project Background in Markdown, max 2500 characters>"
+}}
+
+Rules:
+- Return the ENTIRE updated Project Background, not just the changed part.
+- If the user asks to improve/refine/rework the context in general, or gives a brief or vague
+  request (e.g. "make it better", "improve it", "do something useful"), rewrite the whole
+  Project Background so it becomes genuinely clearer, better structured and more useful. In
+  this case NEVER return the current content unchanged.
+- When the user asks for a specific, scoped change (e.g. "add a testing section", "shorten
+  the overview"), apply that change and preserve the rest of the content as-is.
+- Always build on the current content above; keep the project's original intent and existing
+  facts when they are clear, and do not invent specific facts unless reasonably implied.
+- Must be written in Markdown and stay within 2500 characters.
+- Must not include suggested tools, agents, pipelines, toolkits, MCPs, or resources.
+- Must not include secrets, credentials, tokens, passwords, or unsafe instructions.
+- Return ONLY the JSON object — no prose, no code fences, no extra keys."""
+
+PROJECT_CONTEXT_GENERATOR_DEFAULT_PROMPT_V2 = """You are an assistant that generates EliteA Project Context drafts based on the user's natural-language description.
+
+Your task is to generate Project Background content for a project.
+
+Project Background is used by EliteA to provide better, more accurate, and project-specific AI responses. It may include architecture, design decisions, workflows, terminology, processes, constraints, testing rules, development practices, deployment details, or other important project-specific information.
+
+Return only valid JSON. Do not include explanations, comments, markdown fences, or extra text.
+
+The response must match this JSON structure:
+
+{
+  "activation_description": "",
+  "project_background": ""
+}
+
+Field requirements:
+
+1. activation_description
+- Maximum length: 300 characters.
+- Must concisely describe which user requests should load this Project Context.
+- Must classify intent without repeating or revealing the full Project Background.
+- Should use concrete verbs and topics from the user's request.
+
+2. project_background
+- Must be written in Markdown.
+- Maximum length: 2500 characters.
+- Must be clear, structured, and useful as reusable project context.
+- Must be based on the user's provided information.
+- Should organize information into meaningful sections when appropriate.
+- Should avoid generic filler text.
+- Should not invent specific facts unless they are reasonably implied by the user input.
+- Must not include suggested tools, agents, pipelines, toolkits, MCPs, or resources.
+- Must not include secrets, credentials, tokens, passwords, or unsafe instructions.
+
+Recommended Markdown structure when relevant:
+- Project Overview
+- Architecture
+- Key Components
+- Development Process
+- Testing Approach
+- Deployment / Environment Notes
+- Important Rules or Constraints
+- Terminology
+
+Generation rules:
+- Generate both the activation description and Project Background.
+- Keep it concise and useful.
+- If the user request is vague, create a reasonable general-purpose project context based on the available information.
+- Ensure the response is valid JSON and can be parsed directly."""
+
+EDIT_PROJECT_CONTEXT_DRAFT_DEFAULT_PROMPT_V2 = """You are a Project Context refinement assistant for the Elitea platform. The user wants to MODIFY the existing Project Background content.
+
+Project Background is used by EliteA to provide better, more accurate, and project-specific AI responses. It may include architecture, design decisions, workflows, terminology, processes, constraints, testing rules, development practices, deployment details, or other important project-specific information.
+
+Current Project Context:
+{current_config}
+
+Apply the user's request and produce the COMPLETE updated Project Context as a single JSON object
+with exactly these keys:
+{{
+  "activation_description": "<when user requests should load this context, max 300 characters>",
   "project_background": "<the full updated Project Background in Markdown, max 2500 characters>"
 }}
 
@@ -1239,6 +1396,17 @@ Rules:
 - Must not include suggested tools, agents, pipelines, toolkits, MCPs, or resources.
 - Must not include secrets, credentials, tokens, passwords, or unsafe instructions.
 - Return ONLY the JSON object — no prose, no code fences, no extra keys."""
+
+PROJECT_CONTEXT_PAST_DEFAULT_PROMPTS: dict[str, tuple[str, ...]] = {
+    "project_context_generator": (
+        PROJECT_CONTEXT_GENERATOR_DEFAULT_PROMPT_V1,
+        PROJECT_CONTEXT_GENERATOR_DEFAULT_PROMPT_V2,
+    ),
+    "edit_project_context_draft": (
+        EDIT_PROJECT_CONTEXT_DRAFT_DEFAULT_PROMPT_V1,
+        EDIT_PROJECT_CONTEXT_DRAFT_DEFAULT_PROMPT_V2,
+    ),
+}
 
 
 EDIT_SKILL_DRAFT_DEFAULT_PROMPT = """You are a skill refinement assistant for the Elitea platform. The user wants to MODIFY an existing skill.
