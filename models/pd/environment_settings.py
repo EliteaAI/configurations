@@ -29,6 +29,11 @@ class EnvironmentSettings(BaseModel):
         title="Default Auto classifier",
         description="Shared public model that classifies Auto requests for projects without their own classifier.",
     )
+    manual_max_context_tokens_enabled: StrictBool = Field(
+        default=False,
+        title="Allow manual Max Context Tokens (summarization testing)",
+        description="Platform admins may set a manual summarization trigger per chat.",
+    )
 
     system_sender_name: str = Field(
         default="Elitea",
