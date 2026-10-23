@@ -33,3 +33,10 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # fallback classifier. Projects with an available Low-tier model keep working on deploy without admin action.
 # For the others, set a fallback in Admin -> Features -> Auto Model Selection (a shared, fast model); until a
 # level resolves, Auto readiness reports CLASSIFIER_NOT_CONFIGURED (nothing set) or CLASSIFIER_UNAVAILABLE.
+
+# Credential generation counter (#6943): configuration.generation is bumped on every change to data. Existing
+# project schemas get the column from an admin task (Administration -> Tasks), dry run first, then live:
+#   add_configuration_generation_column  param: project_id=all;dry_run
+#   add_configuration_generation_column  param: project_id=all
+# Run it before the release that reads the column is deployed. Idempotent; new projects get the column from
+# the model.

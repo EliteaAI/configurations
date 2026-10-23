@@ -19,6 +19,7 @@ class Configuration(db.Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uuid: Mapped[str] = mapped_column(UUID(as_uuid=True), unique=True, default=uuid.uuid4)
+    generation: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
 
     project_id: Mapped[int] = mapped_column(Integer, nullable=False)
     label: Mapped[str] = mapped_column(String, nullable=True)

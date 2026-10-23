@@ -27,6 +27,7 @@ class _Configuration(_Base):
     data: Mapped[dict] = mapped_column(JSONB)
     status_ok: Mapped[bool] = mapped_column(Boolean)
     author_id: Mapped[int] = mapped_column(Integer)
+    generation: Mapped[int] = mapped_column(Integer)
 
 
 class _ConfigurationDetails:

@@ -22,11 +22,12 @@ from copy import deepcopy
 
 from pylon.core.tools import log  # pylint: disable=E0611,E0401,W0611
 from pylon.core.tools import web  # pylint: disable=E0611,E0401,W0611
-from sqlalchemy import update
+from sqlalchemy import text, update
 from sqlalchemy.orm.attributes import flag_modified
 
 from tools import db, VaultClient
 from ..models.configuration import Configuration
+from ..generation_column import add_generation_column
 from ..common_utils import get_public_project_id
 from ..llm_model_profiles import reasoning_backfill_patch
 
@@ -309,6 +310,95 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         log.info(
             "%sExiting backfill_llm_model_reasoning_profiles — %s %s model(s), skipped %s, failed projects %s (duration = %ss)",
             prefix, "would backfill" if dry_run else "backfilled", result["backfilled"], result["skipped"],
+            result["failed_projects"], round(time.time() - start_ts, 2)
+        )
+        return result
+
+    @web.method()
+    def add_configuration_generation_column(self, *args, **kwargs):
+        """Add the `generation` column to every project's configuration table (R-2.0.8, #6943). Param: project_id=<all|N>[;dry_run]
+
+        `generation` counts changes to a credential's data; resolving a credential by its uuid reports it.
+        Run this before the release that reads the column is deployed. Idempotent: schemas that already
+        have the column are left alone, and schemas without a configuration table are reported.
+
+        Param format (required):
+            "project_id=<all|N>[;dry_run]"
+
+        Examples:
+            "project_id=all;dry_run"  - report which project schemas lack the column
+            "project_id=all"          - add the column everywhere it is missing
+            "project_id=3"            - project 3 only
+        """
+        param = kwargs.get("param", "") or ""
+        dry_run = False
+        project_id_filter = None
+        project_id_found = False
+
+        for seg in [s.strip() for s in param.split(";")]:
+            seg_lower = seg.lower()
+            if seg_lower.startswith("project_id="):
+                project_id_found = True
+                value = seg[len("project_id="):].strip()
+                if value.lower() != "all":
+                    try:
+                        project_id_filter = int(value)
+                    except ValueError:
+                        log.error("add_configuration_generation_column: invalid project_id '%s'", value)
+                        return {"added": 0, "error": f"invalid project_id: '{value}'"}
+            elif seg_lower == "dry_run":
+                dry_run = True
+
+        if not project_id_found:
+            log.error("add_configuration_generation_column: project_id= is required. Format: project_id=<all|N>[;dry_run]")
+            return {"added": 0, "error": "project_id= is required. Format: project_id=<all|N>[;dry_run]"}
+
+        prefix = "[DRY RUN] " if dry_run else ""
+        log.info("Starting add_configuration_generation_column (dry_run=%s, project_id_filter=%s)", dry_run, project_id_filter)
+        start_ts = time.time()
+
+        try:
+            if project_id_filter is not None:
+                projects = [{"id": project_id_filter}]
+            else:
+                projects = self.context.rpc_manager.call.project_list() or []
+        except Exception:  # pylint: disable=W0703
+            log.exception("add_configuration_generation_column: failed to list projects")
+            return {"added": 0, "error": "failed to list projects"}
+
+        from tools import project_constants as pc  # pylint: disable=E0401,C0415
+
+        result = {"added": 0, "missing": [], "no_table": [], "failed_projects": [], "dry_run": dry_run}
+        for project in projects:
+            project_id = int(project['id'])
+            schema = pc["PROJECT_SCHEMA_TEMPLATE"].format(project_id)
+            try:
+                with db.with_project_schema_session(project_id) as session:
+                    columns = {row[0] for row in session.execute(
+                        text("SELECT column_name FROM information_schema.columns "
+                             "WHERE table_schema = :schema AND table_name = 'configuration'"),
+                        {"schema": schema},
+                    )}
+                    if not columns:
+                        result["no_table"].append(project_id)
+                        continue
+                    if "generation" in columns:
+                        continue
+                    log.info("%sproject %s: configuration.generation is missing", prefix, project_id)
+                    if not dry_run:
+                        add_generation_column(session, schema)
+                        session.commit()
+            except Exception:  # pylint: disable=W0703
+                log.exception("%sadd_configuration_generation_column: error in project %s", prefix, project_id)
+                result["failed_projects"].append(project_id)
+                continue
+            result["missing"].append(project_id)
+            if not dry_run:
+                result["added"] += 1
+
+        log.info(
+            "%sExiting add_configuration_generation_column — %s %s project(s), no table %s, failed projects %s (duration = %ss)",
+            prefix, "would add to" if dry_run else "added to", len(result["missing"]), result["no_table"],
             result["failed_projects"], round(time.time() - start_ts, 2)
         )
         return result
