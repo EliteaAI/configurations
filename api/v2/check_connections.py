@@ -1,5 +1,5 @@
 from copy import deepcopy
-from typing import Any
+from typing import Any, Optional
 
 from flask import request
 from pydantic import BaseModel, RootModel
@@ -7,6 +7,7 @@ from pydantic import BaseModel, RootModel
 from ...local_tools import APIBase, VaultClient, register_openapi, config as c
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY
 from ...utils import expand_configuration
+from ...governed_probe import governed_check, is_governed
 from tools import auth
 from pylon.core.tools import log
 
@@ -15,6 +16,7 @@ class BatchCheckItem(BaseModel):
     id: str
     type: str
     data: dict[str, Any] = {}
+    configuration_uuid: Optional[str] = None  # saved credential to test; acted on only when governance is enabled
 
 
 class BatchCheckPayload(RootModel[list[BatchCheckItem]]):
@@ -50,6 +52,7 @@ class API(APIBase):
         vc = VaultClient(project_id)
         user_id = auth.current_user().get('id')
         results = []
+        governed = is_governed()
 
         for item in items:
             item_id = item.get('id')
@@ -59,6 +62,14 @@ class API(APIBase):
             registry_entry = CONFIG_TYPE_REGISTRY.get(config_type)
             if not registry_entry:
                 results.append({'id': item_id, 'success': False, 'unsupported': True})
+                continue
+
+            outcome = governed_check(
+                registry_entry, config_type, data, item.get('configuration_uuid'),
+                project_id, user_id, governed=governed,
+            )
+            if outcome is not None:
+                results.append({'id': item_id, **outcome[0]})
                 continue
 
             data = vc.unsecret(data)
