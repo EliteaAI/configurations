@@ -43,3 +43,23 @@ class Method:
                     'type': 'environment_settings', 'shared': True, 'data': data})
         options = classifier_options(get_routing_models(project_id, actor)['items'])
         return {**platform_values(record), 'classifier_options': options, 'can_manage': True}
+
+    @web.method()
+    def manual_context_tokens_platform_settings(self, values=None):
+        actor = current_actor_id()
+        if not is_platform_admin(actor):
+            raise PermissionError('Administration admin role is required')
+        project_id = get_public_project_id()
+        record = get_project_configuration(project_id, {'type': 'environment_settings', 'elitea_title': 'environment_settings'})
+        if values is not None:
+            if not isinstance(values, dict) or set(values) != {'enabled'} or type(values['enabled']) is not bool:
+                raise ValueError('enabled must be a boolean')
+            data = {**((record or {}).get('data') or {}), 'manual_max_context_tokens_enabled': values['enabled']}
+            if record:
+                record = update_configuration(project_id, record['id'], {'data': data})
+            else:
+                record = create_configuration({'project_id': project_id, 'author_id': actor,
+                    'elitea_title': 'environment_settings', 'label': 'Environment settings',
+                    'type': 'environment_settings', 'shared': True, 'data': data})
+        data = (record or {}).get('data') or {}
+        return {'enabled': data.get('manual_max_context_tokens_enabled') is True, 'can_manage': True}

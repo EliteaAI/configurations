@@ -6,11 +6,12 @@ from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, reg
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
 from ...models.pd.registry import managed_configuration_error
-from ...tracing_access import can_manage_tracing, is_tracing_type
+from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type, stored_login_changed
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 from ...folder_access import require_folder_access
 
 TRACING_DENIED = {"error": "Tracing configurations are managed by project admins"}
+STORED_LOGIN_DENIED = "Only project admins can log in or out on a team credential"
 
 
 def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
@@ -38,6 +39,13 @@ def refuse_write(project_id: int, config_id: int) -> tuple[dict, int] | None:
     if managed:
         return managed, 409
     return None
+
+
+def read_configuration_data(project_id: int, config_id: int) -> dict:
+    with db.get_session(project_id) as session:
+        return session.query(Configuration.data).filter_by(
+            id=config_id, project_id=project_id
+        ).scalar() or {}
 
 
 class API(APIBase):
@@ -128,6 +136,10 @@ class API(APIBase):
         except Exception as e:
             return {"error": str(e)}, 400
         update_payload = parsed.model_dump(exclude_unset=True)
+        if 'data' in update_payload and stored_login_changed(
+                read_configuration_data(project_id, config_id), update_payload['data']):
+            if not can_manage_stored_login(project_id, auth.current_user().get('id')):
+                return {"error": STORED_LOGIN_DENIED, "field": "refresh_token"}, 403
         try:
             updated_config = update_configuration(project_id, config_id, update_payload=update_payload)
         except ConfigurationError as ce:

@@ -410,6 +410,43 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
             log.debug(f'expand_configuration: {k} is dict, checking for elitea_title')
             expand_configuration(payload[k], current_project_id=current_project_id, user_id=user_id, unsecret=unsecret, already_done=already_done)
 
+STORED_LOGIN_FIELDS = ("refresh_token", "client_id", "client_secret", "oauth_discovery_endpoint",
+                       "scopes", "url", "tenant_id")
+
+
+def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected_type: str):
+    """A credential's stored login read from the DB, only where expand_configuration could reach it."""
+    import uuid as uuid_lib
+    try:
+        uuid_value = uuid_lib.UUID(str(configuration_uuid))
+    except (TypeError, ValueError):
+        return None
+    public_project_id = get_public_project_id()
+    lookups = [(project_id, False)]
+    if user_id:
+        try:
+            lookups.append((get_personal_project_id(user_id), False))
+        except Exception:  # pylint: disable=W0703
+            log.warning("get_stored_login: personal project lookup failed for user %s", user_id)
+    if public_project_id:
+        lookups.append((public_project_id, True))
+    for lookup_project_id, shared_only in lookups:
+        with db.get_session(lookup_project_id) as session:
+            query = session.query(Configuration).filter_by(uuid=uuid_value, type=expected_type)
+            if shared_only:
+                query = query.filter_by(shared=True)
+            config = query.first()
+            if config is None:
+                continue
+            data = VaultClient(config.project_id).unsecret(dict(config.data or {}))
+        if not data.get("refresh_token"):
+            return None
+        login = {key: data.get(key) for key in STORED_LOGIN_FIELDS}
+        login.update(configuration_uuid=str(config.uuid), type=config.type)
+        return login
+    return None
+
+
 def get_configuration_llm_models_with_limits_query(session, project_id: int, filters: list, section: str = "llm") -> Query:
     """
     Build a query to retrieve configuration models with provided filters.
