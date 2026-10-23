@@ -511,6 +511,89 @@ class Method:  # pylint: disable=E1101,R0903,W0201
             return {"migrated": 0, "error": "migration failed"}
 
     @web.method()
+    def migrate_service_prompt_project_context(self, *args, **kwargs):
+        """Upgrade the 'project_context_generator' and 'edit_project_context_draft' service
+        prompts to the current defaults (#7129).
+        Param: [dry_run]
+
+        The past defaults asked for a Project Background of up to 2500 characters - the hard cap -
+        so drafts often overshot it and were rejected; the current defaults ask for 2400.
+        ``ensure_default_service_prompts`` never updates existing rows, so this task overwrites a
+        row's prompt ONLY if it still matches one of PROJECT_CONTEXT_PAST_DEFAULT_PROMPTS after
+        stripping. A hand-edited prompt is left untouched and reported under ``skipped_custom``.
+
+        Idempotent: rows already on the current default are reported under ``up_to_date``.
+
+        Examples:
+            ""        - live run
+            "dry_run" - dry run
+        """
+        # pylint: disable=C0415
+        from ..models.pd.service_prompt_defaults import (
+            PROJECT_CONTEXT_PAST_DEFAULT_PROMPTS,
+            SERVICE_PROMPT_DEFAULTS,
+        )
+
+        param = kwargs.get("param", "") or ""
+        dry_run = any(seg.strip().lower() == "dry_run" for seg in param.split(";"))
+        prefix = "[DRY RUN] " if dry_run else ""
+        result = {"migrated": [], "up_to_date": [], "skipped_custom": [], "missing": [], "dry_run": dry_run}
+
+        try:
+            public_project_id = get_public_project_id()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_project_context: failed to resolve public project id")
+            return {**result, "error": "failed to resolve public project id"}
+
+        if not public_project_id:
+            log.error("migrate_service_prompt_project_context: public project id is not configured")
+            return {**result, "error": "public project id is not configured"}
+
+        try:
+            with db.get_session(public_project_id) as session:
+                for key in sorted(PROJECT_CONTEXT_PAST_DEFAULT_PROMPTS):
+                    cfg = session.query(Configuration).filter_by(
+                        elitea_title=key, type="service_prompt",
+                    ).first()
+                    if not cfg:
+                        result["missing"].append(key)
+                        continue
+
+                    current_prompt = ((cfg.data or {}).get("prompt") or "").strip()
+                    if current_prompt == SERVICE_PROMPT_DEFAULTS[key].strip():
+                        result["up_to_date"].append(key)
+                        continue
+                    if current_prompt not in {p.strip() for p in PROJECT_CONTEXT_PAST_DEFAULT_PROMPTS[key]}:
+                        log.warning(
+                            "%smigrate_service_prompt_project_context: configuration id=%s (%s) does not "
+                            "match any known past default — assuming it was customized; leaving it "
+                            "untouched. Lower its Project Background limit by hand if you want it.",
+                            prefix, cfg.id, key,
+                        )
+                        result["skipped_custom"].append(key)
+                        continue
+
+                    result["migrated"].append(key)
+                    if not dry_run:
+                        updated_data = deepcopy(cfg.data or {})
+                        updated_data["prompt"] = SERVICE_PROMPT_DEFAULTS[key]
+                        cfg.data = updated_data
+                        flag_modified(cfg, "data")
+
+                if result["migrated"] and not dry_run:
+                    session.commit()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_project_context: migration failed")
+            return {**result, "migrated": [], "error": "migration failed"}
+
+        log.info(
+            "%smigrate_service_prompt_project_context: %s %s, up to date %s, skipped custom %s, missing %s",
+            prefix, "would migrate" if dry_run else "migrated", result["migrated"],
+            result["up_to_date"], result["skipped_custom"], result["missing"],
+        )
+        return result
+
+    @web.method()
     def danger_sanitize_secrets_with_value(self, *args, **kwargs):
         """Admin task: sanitize secrets and credentials for staging environments.
 

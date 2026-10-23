@@ -92,6 +92,12 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "add_configuration_generation_column", add_generation, group="R-2.0.8",
             )
+            migrate_project_context_prompts = self._wrap_admin_task(
+                Method, "migrate_service_prompt_project_context", self
+            )
+            this.for_module("admin").module.register_admin_task(
+                "migrate_service_prompt_project_context", migrate_project_context_prompts, group="R-2.0.8",
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -112,6 +118,9 @@ class Module(module.ModuleModel):
             )
             this.for_module("admin").module.unregister_admin_task(
                 "add_configuration_generation_column", self.add_configuration_generation_column
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "migrate_service_prompt_project_context", self.migrate_service_prompt_project_context
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)
