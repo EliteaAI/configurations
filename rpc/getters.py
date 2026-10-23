@@ -7,7 +7,7 @@ from ..common_utils import get_public_project_id
 from ..local_tools import db, log
 from ..models.configuration import Configuration
 from ..models.pd.llm_model import LlmModelList
-from ..utils import get_configuration_llm_models_with_limits_query, get_configurations
+from ..utils import get_configuration_llm_models_with_limits_query, get_configurations, get_stored_login
 from ..utils_getters import (
     get_user_configurations, get_all_project_configurations,
     get_project_configurations, get_project_configuration
@@ -91,6 +91,12 @@ class RPC:
                     'elitea_title': config.elitea_title,
                 }
         return None
+
+    @web.rpc('configurations_get_stored_login', 'get_stored_login')
+    def configurations_get_stored_login(self, project_id: int, user_id, configuration_uuid: str,
+                                        expected_type: str) -> dict | None:
+        """Unsealed stored login of a credential the run can expand; never trusts the predict payload."""
+        return get_stored_login(project_id, user_id, configuration_uuid, expected_type)
 
     @web.rpc('configurations_get_filtered_public')
     def configurations_get_filtered_public(self, filter_fields: Optional[dict] = None) -> list[dict]:

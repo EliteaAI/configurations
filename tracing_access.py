@@ -100,3 +100,16 @@ def hidden_tracing_types(project_id: int, user_id: int | None) -> set[str]:
     if can_manage_tracing(project_id, user_id):
         return set()
     return list_tracing_types()
+
+
+def stored_login_changed(previous_data: dict | None, new_data: dict | None) -> bool:
+    """True when a write sets, clears or replaces the credential's stored Microsoft login."""
+    old = (previous_data or {}).get('refresh_token')
+    new = (new_data or {}).get('refresh_token')
+    return bool(old or new) and old != new
+
+
+def can_manage_stored_login(project_id: int, user_id: int | None) -> bool:
+    # Same rule as tracing: everyone in the project runs on the login, so only admins (or the owner of
+    # their own personal project) may log in or out on a team credential
+    return can_manage_tracing(project_id, user_id)

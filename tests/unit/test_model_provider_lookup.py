@@ -189,6 +189,7 @@ def getters():
             f"{package}.utils",
             get_configuration_llm_models_with_limits_query=lambda *a, **k: None,
             get_configurations=lambda *a, **k: None,
+            get_stored_login=lambda *a, **k: None,
         ),
         f"{package}.utils_getters": stub(
             f"{package}.utils_getters",
