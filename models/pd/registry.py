@@ -98,8 +98,25 @@ CONFIG_TYPE_REGISTRY: dict[str, ConfigTypeRegistryItem] = {
 }
 
 
+_REGISTRY_VERSION = [0]
+
+
+def registry_version() -> int:
+    """A counter that changes whenever ``CONFIG_TYPE_REGISTRY`` is changed through the functions below.
+
+    Caches of schema-derived data (the secret field paths of a type) key on it, so a re-registered or removed type
+    is never answered from an old schema.
+    """
+    return _REGISTRY_VERSION[0]
+
+
+def _registry_changed() -> None:
+    _REGISTRY_VERSION[0] += 1
+
+
 def clear_config_type_registry():
     CONFIG_TYPE_REGISTRY.clear()
+    _registry_changed()
 
 
 def register_config_type(type_name: str, section: str, model=None, validation_func=None, config_schema=None,
@@ -129,13 +146,17 @@ def register_config_type(type_name: str, section: str, model=None, validation_fu
         item = ConfigTypeRegistryItem.model_validate(item.model_dump(exclude_unset=True))
         log.info(f'Registering config: {item}')
         CONFIG_TYPE_REGISTRY[type_name] = item
+        _registry_changed()
     except:
         log.error(format_exc())
 
 
 def unregister_config_type(type_name: str) -> bool:
     """Remove a dynamic configuration type without touching saved records."""
-    return CONFIG_TYPE_REGISTRY.pop(type_name, None) is not None
+    removed = CONFIG_TYPE_REGISTRY.pop(type_name, None) is not None
+    if removed:
+        _registry_changed()
+    return removed
 
 
 def managed_configuration_error(type_name: str | None) -> dict | None:
