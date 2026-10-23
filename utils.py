@@ -1,3 +1,5 @@
+import uuid as uuidlib
+
 from pydantic import SecretStr, ValidationError
 from sqlalchemy import func, cast, Integer, Boolean, and_, desc, asc
 from sqlalchemy.exc import IntegrityError
@@ -206,10 +208,13 @@ def delete_configuration(project_id: int, config_id: int):
     return data
 
 
-def update_configuration(project_id: int, config_id: int, update_payload: dict) -> dict:
+def update_configuration(project_id: int, config_id: int, update_payload: dict,
+                         expected_generation: int | None = None) -> dict:
     """
     Update an existing configuration entity in the database.
     Properly handles secret fields by storing them in vault.
+    Every change to `data` increments `generation`; when `expected_generation` is given and differs
+    from the stored one, nothing is changed and ConfigurationError("generation", ...) is raised.
     Returns the updated configuration as a dict.
     """
 
@@ -218,6 +223,8 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
         config: Configuration = session.query(Configuration).filter_by(id=config_id).first()
         if not config:
             raise ValueError(f"Configuration with id {config_id} not found")
+        if expected_generation is not None and config.generation != expected_generation:
+            raise ConfigurationError("generation", "Configuration was modified concurrently")
 
         from .routing_access import validate_routing_write
         update_payload = validate_routing_write(config.type, project_id, update_payload, existing={
@@ -273,6 +280,9 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                     log.error(f"Error storing secrets during update: {str(e)}")
                     raise ConfigurationError("data", f"Failed to store secret fields: {str(e)}")
         
+        if 'data' in update_payload:
+            config.generation = (config.generation or 1) + 1
+
         # Apply all updates to the configuration
         for key, value in update_payload.items():
             if key == 'status_logs':
@@ -333,19 +343,84 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict) 
                 raise ConfigurationError("database", "Database error")
 
 
+def _merge_configuration(payload: dict, config: Configuration, public_project_id: int,
+                         current_project_id: int, unsecret: bool) -> None:
+    # Check if this is a private pgvector config being used in a shared project
+    if config.type == 'pgvector':
+        if config.project_id != public_project_id and payload.get('private') and current_project_id != config.project_id:
+            raise ValueError(
+                f"Private pgvector configuration '{config.elitea_title}' is not allowed within shared projects. "
+                f"Only public shared pgvector or team configurations are permitted."
+            )
+
+    if unsecret:
+        vc = VaultClient(config.project_id)
+        naked_data = vc.unsecret(config.data)
+        payload.update(naked_data)
+    else:
+        payload.update(config.data)
+
+    payload['configuration_uuid'] = str(config.uuid)
+    payload['configuration_project_id'] = config.project_id
+    payload['configuration_type'] = config.type
+    payload['configuration_generation'] = config.generation
+
+
 def expand_configuration(payload: dict, current_project_id: int, user_id: int = None,
                          unsecret: bool = False, already_done: list = None) -> None:
     """
     Searches for a Configuration based on payload fields.
-    If 'private' is False, searches by current_project_id and 'elitea_title'.
+    If 'configuration_uuid' is present it wins over any title: the immutable uuid is looked up in
+    'configuration_project_id' (else the personal project when 'private', else current_project_id), with no
+    title lookup and no fallback. The result must be in the current project, in the user's personal project
+    when 'private', or shared in the public project; otherwise LookupError. A malformed uuid is ValueError.
+    Otherwise, if 'private' is False, searches by current_project_id and 'elitea_title'.
     If 'private' is True, searches by personal project id (derived from user_id) and 'elitea_title'.
     Raises ValueError if required fields are missing or configuration not found.
-    Prevents infinite recursion by tracking already processed titles in already_done.
+    Prevents infinite recursion by tracking already processed titles (or uuids) in already_done.
     """
     if already_done is None:
         already_done = []
+    cfg_uuid = payload.get('configuration_uuid')
     title = payload.get('elitea_title') or payload.get('alita_title')
-    if title:
+    if cfg_uuid:
+        try:
+            cfg_uuid = uuidlib.UUID(str(cfg_uuid))
+        except ValueError:
+            raise ValueError(f"Invalid configuration_uuid '{cfg_uuid}'")
+        key = str(cfg_uuid)
+        if key in already_done:
+            raise ValueError(f"Recursion error, please validate your configuration ID: {key}")
+        try:
+            public_project_id: int = get_public_project_id()
+            private = payload.get('private')
+            personal_project_id = None
+            if private:
+                if user_id is None:
+                    raise ValueError("user_id must be provided for personal configuration lookup")
+                personal_project_id = get_personal_project_id(user_id)
+            project_id = payload.get('configuration_project_id') or personal_project_id or current_project_id
+
+            with db.get_session(project_id) as session:
+                config = session.query(Configuration).filter_by(uuid=cfg_uuid).first()
+
+            visible = config is not None and (
+                config.project_id == current_project_id
+                or config.project_id == personal_project_id
+                or (config.project_id == public_project_id and config.shared)
+            )
+            if not visible:
+                raise LookupError(
+                    f"Configuration with uuid '{key}' not found for project_id {project_id}",
+                    {"personal_project_lookup": bool(private), "configuration_uuid": key}
+                )
+
+            _merge_configuration(payload, config, public_project_id, current_project_id, unsecret)
+        except Exception as e:
+            log.exception("Error in expand_configuration")
+            raise
+        already_done.append(key)
+    elif title:
         if title in already_done:
             raise ValueError(f"Recursion error, please validate your configuration ID: {title}")
         try:
@@ -382,24 +457,7 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
                     {"personal_project_lookup": bool(private), "elitea_title": title}
                 )
 
-            # Check if this is a private pgvector config being used in a shared project
-            if config.type == 'pgvector':
-                if config.project_id != public_project_id and payload.get('private') and current_project_id != config.project_id:
-                    raise ValueError(
-                        f"Private pgvector configuration '{title}' is not allowed within shared projects. "
-                        f"Only public shared pgvector or team configurations are permitted."
-                    )
-
-            if unsecret:
-                vc = VaultClient(config.project_id)
-                naked_data = vc.unsecret(config.data)
-                payload.update(naked_data)
-            else:
-                payload.update(config.data)
-
-            payload['configuration_uuid'] = str(config.uuid)
-            payload['configuration_project_id'] = config.project_id
-            payload['configuration_type'] = config.type
+            _merge_configuration(payload, config, public_project_id, current_project_id, unsecret)
         except Exception as e:
             log.exception("Error in expand_configuration")
             raise
