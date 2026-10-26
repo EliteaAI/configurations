@@ -16,6 +16,8 @@ from .models.pd.registry import CONFIG_TYPE_REGISTRY, owned_entry
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
 from .llm_model_profiles import check_llm_model_profile_bounds
+from .oauth_apps import apply_oauth_app, strip_app_client_fields, decorate_credentials
+from .models.pd.registry import ADMIN_MANAGED_TYPES
 
 
 def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
@@ -116,6 +118,9 @@ def create_configuration(payload: dict, owner: str | None = None) -> Configurati
     from .routing_access import validate_routing_write
     assert_write_allowed(payload.get('type'), payload.get('elitea_title'), owner)
     payload = validate_routing_write(payload.get('type'), payload.get('project_id'), payload)
+    if isinstance(payload.get('data'), dict):
+        payload = {**payload, 'data': dict(payload['data'])}
+        strip_app_client_fields(payload.get('type'), payload['data'], payload.get('project_id'))
     try:
         parsed = ConfigurationCreate.model_validate(payload)
     except ValidationError as ve:
@@ -260,6 +265,7 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
         if 'data' in update_payload:
             # Get the configuration type registry entry
             entry = CONFIG_TYPE_REGISTRY.get(config.type)
+            strip_app_client_fields(config.type, update_payload['data'], project_id)
             if entry:
                 # data is replaced wholesale, so validate it exactly as create does (raw, before secret handling)
                 if config.type != 'service_prompt' and entry.model and hasattr(entry.model, 'model_validate'):
@@ -382,6 +388,9 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
     else:
         payload.update(config.data)
 
+    # Default-mode Teams/Outlook/SharePoint credentials take their client from the admin app
+    apply_oauth_app(payload, config.type, current_project_id, unsecret)
+
     payload['configuration_uuid'] = str(config.uuid)
     payload['configuration_project_id'] = config.project_id
     payload['configuration_type'] = config.type
@@ -389,7 +398,7 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
 
 
 def expand_configuration(payload: dict, current_project_id: int, user_id: int = None,
-                         unsecret: bool = False, already_done: list = None) -> None:
+                         unsecret: bool = False, already_done: list = None, config_type: str = None) -> None:
     """
     Searches for a Configuration based on payload fields.
     If 'configuration_uuid' is present it wins over any title: the immutable uuid is looked up in
@@ -426,7 +435,8 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
             with db.get_session(project_id) as session:
                 config = session.query(Configuration).filter_by(uuid=cfg_uuid).first()
 
-            visible = config is not None and (
+            # An admin app is resolved through a credential's oauth_app_id, never referenced directly
+            visible = config is not None and config.type not in ADMIN_MANAGED_TYPES and (
                 config.project_id == current_project_id
                 or config.project_id == personal_project_id
                 or (config.project_id == public_project_id and config.shared)
@@ -472,6 +482,10 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
                         shared=True
                     ).first()
 
+            # An admin app is resolved through a credential's oauth_app_id, never referenced directly
+            if config and config.type in ADMIN_MANAGED_TYPES:
+                config = None
+
             if not config:
                 raise LookupError(
                     f"Configuration with title '{title}' not found for project_id {project_id} "
@@ -484,6 +498,9 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
             log.exception("Error in expand_configuration")
             raise
         already_done.append(title)
+    elif config_type:
+        # An unsaved credential (test connection) carries its own data, possibly only an app reference
+        apply_oauth_app(payload, config_type, current_project_id, unsecret)
 
     for k in payload.keys():
         if isinstance(payload[k], dict):
@@ -519,6 +536,11 @@ def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected
             if config is None:
                 continue
             data = VaultClient(config.project_id).unsecret(dict(config.data or {}))
+            try:
+                apply_oauth_app(data, config.type, project_id, unsecret=True)
+            except LookupError as e:
+                log.warning(f"get_stored_login: {e}")
+                return None
         if not data.get("refresh_token"):
             return None
         login = {key: data.get(key) for key in STORED_LOGIN_FIELDS}
@@ -837,7 +859,10 @@ def get_configurations(
             extra_columns = []
 
         # Build and execute project configurations query
-        project_query = session.query(Configuration).filter(Configuration.project_id == project_id)
+        project_query = session.query(Configuration).filter(
+            Configuration.project_id == project_id,
+            Configuration.type.notin_(ADMIN_MANAGED_TYPES),  # managed in the Admin Portal only
+        )
 
         # Filter by specific IDs (used for folder contents)
         parsed_ids = parse_ids_filter(ids)
@@ -933,6 +958,8 @@ def get_configurations(
 
             project_items.append(config_data)
 
+        decorate_credentials(project_items, project_id)
+
         # Add project configurations to response
         response.update({
             "total": project_total,
@@ -994,6 +1021,8 @@ def get_configurations(
                     config_data["options"] = {}
 
                 shared_items.append(config_data)
+
+            decorate_credentials(shared_items, project_id)
 
             # Add shared configurations to response
             response["shared"] = {

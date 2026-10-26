@@ -123,7 +123,8 @@ class Harness:
         _module(f"{API_PACKAGE}.models.pd.configuration", ConfigurationCreateBase=model,
                 ConfigurationDetails=model, ConfigurationUpdate=model)
         _module(f"{API_PACKAGE}.models.pd.registry",
-                managed_configuration_error=self.registry.managed_configuration_error)
+                managed_configuration_error=self.registry.managed_configuration_error,
+                ADMIN_MANAGED_TYPES=self.registry.ADMIN_MANAGED_TYPES)
         _module(f"{API_PACKAGE}.tracing_access", can_manage_tracing=lambda *_: True,
                 can_manage_stored_login=lambda *_: True, stored_login_changed=lambda *_: False,
                 is_tracing_type=lambda _type: False)
@@ -132,7 +133,10 @@ class Harness:
                 update_configuration=record("update", {"id": 1}),
                 delete_configuration=record("delete", True),
                 get_options_for_nested_fields=record("options", {}))
-        _module(f"{API_PACKAGE}.exceptions", ConfigurationError=type("ConfigurationError", (Exception,), {}))
+        _module(f"{API_PACKAGE}.exceptions", ConfigurationError=type("ConfigurationError", (Exception,), {}),
+                handle_validation_error=lambda error: error)
+        # Credential reads decorate admin-app credentials (#7149); nothing to do here
+        _module(f"{API_PACKAGE}.oauth_apps", decorate_credentials=lambda *_: None)
         _module(f"{API_PACKAGE}.common_utils", get_public_project_id=lambda: 1)
         _module(f"{API_PACKAGE}.folder_access", require_folder_access=passthrough)
         return _exec(f"{API_PACKAGE}.api.v2.{filename}", ROOT / "api" / "v2" / f"{filename}.py").API()
@@ -279,9 +283,14 @@ def utils(registry):
     _module(f"{package}.models.pd.configuration", ConfigurationCreate=None, ConfigurationDetails=None,
             ConfigurationCreateRpc=None, ConfigurationList=None)
     _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY=registry.CONFIG_TYPE_REGISTRY,
-            owned_entry=registry.owned_entry)
+            owned_entry=registry.owned_entry, ADMIN_MANAGED_TYPES=registry.ADMIN_MANAGED_TYPES)
     _module(f"{package}.folder_access", folder_exclusion_clause=None)
     _module(f"{package}.llm_model_profiles", check_llm_model_profile_bounds=None)
+    # Admin-app credentials (#7149) are not involved in these writes
+    _module(f"{package}.oauth_apps", OAUTH_APP_TOOLKIT_TYPES=(), apply_oauth_app=lambda *_: None,
+            record_login_client=lambda *_: None, reject_shared=lambda *_: None,
+            resolve_on_use=lambda *_: None, strip_app_client_fields=lambda *_, **__: None,
+            decorate_credentials=lambda *_: None)
     _exec(f"{package}.exceptions", ROOT / "exceptions.py")
     return _exec(f"{package}.utils", ROOT / "utils.py")
 
@@ -389,7 +398,7 @@ def test_available_lists_the_owner_and_the_filled_manage_url(registry):
         model_json_schema=lambda: {"properties": {}}))
     _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY={OWNED: registry.CONFIG_TYPE_REGISTRY[OWNED]},
             manage_url_for=registry.manage_url_for)
-    _module(f"{package}.tracing_access", current_actor_id=lambda: 1, hidden_tracing_types=lambda *_: set())
+    _module(f"{package}.tracing_access", current_actor_id=lambda: 1, hidden_config_types=lambda *_: set())
     api = _exec(f"{package}.api.v2.available", ROOT / "api" / "v2" / "available.py").API()
     items, status = api.get(project_id=7)
     assert status == 200

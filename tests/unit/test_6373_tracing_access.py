@@ -87,6 +87,7 @@ def load_tracing_access(registry=None, rpc=None, personal_projects=None, actor=N
     pd.__path__ = []
     registry_mod = types.ModuleType(f"{PACKAGE}.models.pd.registry")
     registry_mod.CONFIG_TYPE_REGISTRY = registry if registry is not None else {}
+    registry_mod.ADMIN_MANAGED_TYPES = frozenset({"oauth_app"})
     sys.modules[f"{PACKAGE}.models"] = models
     sys.modules[f"{PACKAGE}.models.pd"] = pd
     sys.modules[f"{PACKAGE}.models.pd.registry"] = registry_mod
@@ -202,6 +203,14 @@ def test_hidden_types_are_empty_for_a_manager_and_populated_otherwise():
 
     assert module.hidden_tracing_types(7, 42) == set()
     assert module.hidden_tracing_types(7, 99) == {"langfuse", "otel"}
+
+
+def test_admin_managed_types_are_hidden_from_everyone():
+    module = load_tracing_access(rpc=FakeRpc(admin_project_users={7: {42}}), personal_projects={99: 3})
+
+    assert module.hidden_config_types(None, None) == {"oauth_app"}
+    assert module.hidden_config_types(7, 42) == {"oauth_app"}
+    assert module.hidden_config_types(7, 99) == {"oauth_app", "langfuse"}
 
 
 def test_every_role_lookup_is_bounded_by_a_timeout():

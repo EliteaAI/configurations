@@ -5,7 +5,7 @@ from flask import request
 from ...local_tools import APIBase, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
 from ...models.pd.registry import CONFIG_TYPE_REGISTRY, manage_url_for
-from ...tracing_access import current_actor_id, hidden_tracing_types
+from ...tracing_access import current_actor_id, hidden_config_types
 
 
 class API(APIBase):
@@ -33,7 +33,9 @@ class API(APIBase):
 
         # Cosmetic only; the create handler is the actual control
         project_id = kwargs.get('project_id') or request.args.get('project_id', type=int)
-        hidden_types = hidden_tracing_types(project_id, current_actor_id()) if project_id else set()
+        # Admin-managed types are hidden from everyone and edited only in the Admin Portal.
+        # Only oauth_app is one so far;
+        hidden_types = hidden_config_types(project_id, current_actor_id())
 
         for entry in CONFIG_TYPE_REGISTRY.values():
             has_test_connection = bool(entry.check_connection_func) or hasattr(entry.model, "check_connection")

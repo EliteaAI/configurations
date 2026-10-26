@@ -30,7 +30,7 @@ Decisions recorded so they are not re-litigated in review:
 """
 
 from .local_tools import current_user, log, rpc_manager
-from .models.pd.registry import CONFIG_TYPE_REGISTRY
+from .models.pd.registry import ADMIN_MANAGED_TYPES, CONFIG_TYPE_REGISTRY
 
 TRACING_CATEGORY = 'tracing'
 TRACING_TYPE_FALLBACK = frozenset({'langfuse'})
@@ -100,6 +100,14 @@ def hidden_tracing_types(project_id: int, user_id: int | None) -> set[str]:
     if can_manage_tracing(project_id, user_id):
         return set()
     return list_tracing_types()
+
+
+def hidden_config_types(project_id: int | None, user_id: int | None) -> set[str]:
+    """Types left out of the type catalogue: admin-managed ones always, tracing ones per caller."""
+    hidden = set(ADMIN_MANAGED_TYPES)
+    if project_id:
+        hidden |= hidden_tracing_types(project_id, user_id)
+    return hidden
 
 
 def stored_login_changed(previous_data: dict | None, new_data: dict | None) -> bool:

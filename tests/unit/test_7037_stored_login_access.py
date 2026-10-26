@@ -92,6 +92,7 @@ def load_tracing_access(registry=None, rpc=None, personal_projects=None, actor=N
     pd.__path__ = []
     registry_mod = types.ModuleType(f"{PACKAGE}.models.pd.registry")
     registry_mod.CONFIG_TYPE_REGISTRY = registry if registry is not None else {}
+    registry_mod.ADMIN_MANAGED_TYPES = frozenset({"oauth_app"})
     sys.modules[f"{PACKAGE}.models"] = models
     sys.modules[f"{PACKAGE}.models.pd"] = pd
     sys.modules[f"{PACKAGE}.models.pd.registry"] = registry_mod

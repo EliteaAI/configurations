@@ -14,6 +14,7 @@ from .project_chat_config import ProjectChatConfig
 from .project_icon import ProjectIcon
 from .project_skills import ProjectSkillsSettings
 from .service_prompt import ServicePrompt
+from .oauth_app import OAuthApp, OAUTH_APP_SECTION, OAUTH_APP_TYPE
 from ...local_tools import log
 
 
@@ -290,3 +291,12 @@ register_config_type(
     section='project_settings',
     model=WebSearchProjectSettings,
 )
+
+register_config_type(
+    type_name=OAUTH_APP_TYPE,
+    section=OAUTH_APP_SECTION,
+    model=OAuthApp,
+)
+
+# Managed in the Admin Portal only: hidden from every user, refused by the generic configuration APIs
+ADMIN_MANAGED_TYPES = frozenset({OAUTH_APP_TYPE})

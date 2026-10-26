@@ -83,7 +83,7 @@ def utils():
                                          ConfigurationDetails=SimpleNamespace(model_validate=lambda c: SimpleNamespace(
                                              model_dump=lambda mode: {'id': c.id, 'data': c.data})),
                                          ConfigurationCreateRpc=None, ConfigurationList=None),
-        'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, CONFIG_TYPE_REGISTRY={}),
+        'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, ADMIN_MANAGED_TYPES=frozenset({'oauth_app'}), CONFIG_TYPE_REGISTRY={}),
         'folder_access': _stub('folder_access', folder_exclusion_clause=None),
         'routing_access': _stub('routing_access', validate_routing_write=lambda type_, project, payload, existing: payload),
         'llm_model_profiles': _stub('llm_model_profiles', check_llm_model_profile_bounds=lambda *_: None),
@@ -142,6 +142,15 @@ def test_uuid_in_other_project_not_shared_is_refused(utils):
 
 def test_uuid_in_public_project_not_shared_is_refused(utils):
     row = _put(_row(PUBLIC, shared=False))
+    payload = {'configuration_uuid': str(row.uuid), 'configuration_project_id': PUBLIC}
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=1)
+
+
+def test_uuid_of_an_admin_managed_oauth_app_is_refused(utils):
+    """#7149: an OAuth app is reachable only through a credential's oauth_app_id."""
+    row = _put(_row(PUBLIC, shared=True))
+    row.type = 'oauth_app'
     payload = {'configuration_uuid': str(row.uuid), 'configuration_project_id': PUBLIC}
     with pytest.raises(LookupError):
         utils.expand_configuration(payload, CURRENT, user_id=1)
