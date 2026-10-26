@@ -1,4 +1,3 @@
-"""Project switch for offering every project skill to chat turns without adding them as participants (#7126)."""
 from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
