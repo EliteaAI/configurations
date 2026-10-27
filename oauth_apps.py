@@ -56,7 +56,10 @@ def unavailable_reason(app: dict | None, project_id: int | None, config_type: st
         return f"{name} is no longer offered for {config_type.capitalize()} credentials by your administrator"
     if app.get('enabled') is False:
         return f"{name} was disabled by your administrator"
-    if project_id is not None and not covers_project(app, project_id):
+    # The project is always required: an unknown project never gets an app
+    if not (app.get('allowed_project_ids') or []):
+        return f"{name} has no projects assigned by your administrator"
+    if project_id is None or not covers_project(app, project_id):
         return f"{name} is not available in this project"
     return None
 
@@ -66,12 +69,12 @@ def covers_project(app: dict | None, project_id: int) -> bool:
 
     The public project (``ai_project_id``) in the app's projects means **every** project, the way
     public shared credentials and default models apply everywhere; team projects mean only those.
-    An empty list is treated the same as Public (apps saved before Projects became required).
+    Projects is required, so an app without projects (never valid on save) applies nowhere.
     """
     allowed = {int(i) for i in ((app or {}).get('allowed_project_ids') or [])}
-    if not allowed or get_public_project_id() in allowed:
-        return True
-    return int(project_id) in allowed
+    if not allowed:
+        return False
+    return get_public_project_id() in allowed or int(project_id) in allowed
 
 
 def _parse_uuid(value):
@@ -311,6 +314,8 @@ def validated_app_data(values: dict, existing: dict | None = None) -> dict:
     stored = {k: v for k, v in (existing or {}).items() if k in OAuthApp.model_fields}
     if existing is not None and values.get('provider') and values['provider'] != (stored.get('provider') or MICROSOFT_ENTRA):
         raise ConfigurationError('provider', 'The provider of an app cannot be changed')
+    if not (values.get('allowed_project_ids') if 'allowed_project_ids' in values else stored.get('allowed_project_ids')):
+        raise ConfigurationError('allowed_project_ids', 'Select at least one project')
     try:
         app = OAuthApp.model_validate({**stored, **values})
     except ValidationError as e:

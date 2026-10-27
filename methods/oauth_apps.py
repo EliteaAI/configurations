@@ -31,6 +31,21 @@ def _name(values: dict, fallback: str | None = None) -> str:
     return name
 
 
+def _require_existing_projects(data: dict) -> None:
+    """Every assigned project must exist (Projects is required; the model rejects an empty list)."""
+    from ..local_tools import rpc_manager
+    missing = []
+    for project_id in data.get('allowed_project_ids') or []:
+        try:
+            found = rpc_manager.timeout(5).project_get_by_id(project_id=project_id)
+        except Exception:  # pylint: disable=W0703
+            found = None
+        if not found:
+            missing.append(str(project_id))
+    if missing:
+        raise ConfigurationError('allowed_project_ids', f"Unknown project: {', '.join(missing)}")
+
+
 def _clear_other_defaults(project_id: int, keep_id: int, data: dict) -> None:
     """One default app per provider: the newest choice wins."""
     if not data.get('is_default'):
@@ -53,6 +68,7 @@ class Method:
         actor = _require_admin()
         project_id = get_public_project_id()
         data = validated_app_data(values)
+        _require_existing_projects(data)
         import uuid as uuid_lib
         record = create_configuration({
             'project_id': project_id, 'author_id': actor, 'type': OAUTH_APP_TYPE, 'shared': False,
@@ -70,6 +86,7 @@ class Method:
             raise LookupError('OAuth app not found')
         old_secret = (config.data or {}).get('client_secret')
         data = validated_app_data(values, existing=config.data)
+        _require_existing_projects(data)
         record = update_configuration(project_id, config.id, {
             'label': _name(values, config.label), 'data': data,
         })

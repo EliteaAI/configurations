@@ -100,7 +100,8 @@ class OAuthApp(BaseModel):
         default=False, description="Users of this provider's credentials get this app; one per provider")
     enabled: StrictBool = True
     allowed_project_ids: list[int] = Field(
-        default_factory=list, description='Projects that may use this app; empty means every project')
+        min_length=1,
+        description='Projects that may use this app (required). The public project means every project')
 
     @field_validator('client_id')
     @classmethod
@@ -113,7 +114,10 @@ class OAuthApp(BaseModel):
     @field_validator('allowed_project_ids')
     @classmethod
     def _unique(cls, value):
-        return list(dict.fromkeys(value))
+        value = list(dict.fromkeys(int(i) for i in value))
+        if not value:
+            raise ValueError('Select at least one project')
+        return value
 
     @field_validator('scopes')
     @classmethod

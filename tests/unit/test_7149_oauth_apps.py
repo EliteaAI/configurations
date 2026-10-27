@@ -49,7 +49,7 @@ APP = {
     'label': 'Contoso', 'client_id': 'cid', 'client_secret': '{{secret.app}}',
     'oauth_discovery_endpoint': 'https://login.microsoftonline.com/contoso',
     'scopes': {'teams': ['Chat.Read']}, 'auto_refresh_token': False,
-    'enabled': True, 'allowed_project_ids': [],
+    'enabled': True, 'allowed_project_ids': [1],
 }
 
 
@@ -111,7 +111,7 @@ def test_saved_default_credential_stores_reference_only(modules, monkeypatch):
     _patch_app(modules, monkeypatch)
     data = {'oauth_app_id': 'app-1', 'client_id': 'c', 'client_secret': 's', 'auto_refresh_token': True,
             'oauth_discovery_endpoint': 'https://login.microsoftonline.com/x', 'scopes': ['Mail.Read']}
-    modules.apps.strip_app_client_fields('outlook', data)
+    modules.apps.strip_app_client_fields('outlook', data, 5)
     assert data == {'oauth_app_id': 'app-1'}
 
 
@@ -158,7 +158,7 @@ def test_new_app_requires_a_secret(modules):
 @pytest.mark.parametrize('endpoint', ['https://evil.example/tenant', 'http://login.microsoftonline.com/x'])
 def test_authority_must_be_entra(modules, endpoint):
     with pytest.raises(modules.error):
-        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'oauth_discovery_endpoint': endpoint})
+        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'oauth_discovery_endpoint': endpoint})
 
 
 def test_records_saved_with_removed_fields_still_update(modules):
@@ -219,7 +219,7 @@ def test_admin_connection_check(modules, monkeypatch, body, success, warning, te
 
 
 def test_provider_defaults_to_microsoft_entra(modules):
-    data = modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's'})
+    data = modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7]})
     assert data['provider'] == 'microsoft_entra'
     assert data['oauth_discovery_endpoint'] == 'https://login.microsoftonline.com/organizations'
 
@@ -273,12 +273,13 @@ def test_unset_credential_types_serve_every_type_of_the_provider(modules):
 @pytest.mark.parametrize('types,error', [([], 'at least one'), (['jira'], 'cannot serve')])
 def test_credential_types_are_validated(modules, types, error):
     with pytest.raises(modules.error, match=error):
-        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'credential_types': types})
+        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': types})
 
 
 def test_credential_types_keep_the_provider_order(modules):
     data = modules.apps.validated_app_data(
-        {'client_id': 'c', 'client_secret': 's', 'credential_types': ['sharepoint', 'teams', 'teams']})
+        {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7],
+         'credential_types': ['sharepoint', 'teams', 'teams']})
     assert data['credential_types'] == ['teams', 'sharepoint']
 
 
@@ -287,8 +288,25 @@ def test_credential_types_keep_the_provider_order(modules):
     ([1], 1, None),
     ([7], 5, 'not available'),      # a team project only
     ([7], 7, None),
-    ([], 5, None),                  # empty = all (apps saved before Projects was required)
+    ([], 5, 'no projects assigned'),  # Projects is required: an app without projects applies nowhere
 ])
 def test_public_project_means_every_project(modules, allowed, project, expected):
     reason = modules.apps.unavailable_reason({**APP, 'allowed_project_ids': allowed}, project, 'teams')
     assert (reason is None) if expected is None else (expected in reason)
+
+
+def test_projects_are_required_on_save(modules):
+    with pytest.raises(modules.error, match='Select at least one project'):
+        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's'})
+    with pytest.raises(modules.error):
+        modules.apps.validated_app_data({'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': []})
+
+
+def test_an_update_cannot_drop_all_projects(modules):
+    existing = {**APP, 'client_secret': '{{secret.app}}'}
+    with pytest.raises(modules.error):
+        modules.apps.validated_app_data({'allowed_project_ids': []}, existing)
+
+
+def test_no_project_never_resolves_an_app(modules):
+    assert 'not available in this project' in modules.apps.unavailable_reason(APP, None, 'teams')

@@ -38,6 +38,8 @@ def ensure_default_oauth_app(config: dict | None) -> None:
                 'oauth_discovery_endpoint': seed.get('oauth_discovery_endpoint') or OAUTH_PROVIDERS[MICROSOFT_ENTRA].default_discovery_endpoint,
                 'is_default': True,
                 'enabled': True,
+                # Projects is required; the public project means every project
+                'allowed_project_ids': [public_project_id],
             },
         })
     except Exception as e:  # pylint: disable=W0703
