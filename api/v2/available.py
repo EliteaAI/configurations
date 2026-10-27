@@ -4,7 +4,7 @@ from flask import request
 
 from ...local_tools import APIBase, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
-from ...models.pd.registry import CONFIG_TYPE_REGISTRY
+from ...models.pd.registry import CONFIG_TYPE_REGISTRY, manage_url_for
 from ...tracing_access import current_actor_id, hidden_tracing_types
 
 
@@ -72,6 +72,8 @@ class API(APIBase):
                 "section": entry.section,
                 "config_schema": config_schema,
                 "has_test_connection": has_test_connection,
+                "managed_by": entry.managed_by,
+                "manage_url": manage_url_for(entry, project_id),
                 "check_connection_label": check_connection_label,
 
                 "validation_func": entry.validation_func,

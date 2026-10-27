@@ -23,6 +23,8 @@ class ConfigTypeRegistryItem(BaseModel):
     validation_func: Optional[str] = None  # Name of validation function to call via RPC if no model
     config_schema: dict[str, Any] | None = None  # Optional schema for the model
     check_connection_func: Optional[str] = None  # Name of check connection function to call via RPC if no model
+    managed_by: str | None = None  # Owner plugin: the REST API refuses writes, the owner writes through RPC
+    manage_url: str | None = None  # Where a client changes the owned records instead
 
     @model_validator(mode='after')
     def check_model_or_func(self):
@@ -118,17 +120,22 @@ def clear_config_type_registry():
 
 
 def register_config_type(type_name: str, section: str, model=None, validation_func=None, config_schema=None,
-                         check_connection_func=None, replace=False):
+                         check_connection_func=None, replace=False, managed_by=None, manage_url=None):
     """
     Register a new configuration type in CONFIG_TYPE_REGISTRY.
     User may provide either a model or a validation_func name (str).
-    Raises ValueError if type_name already exists and replacement was not requested.
+    A managed_by owner makes the REST API refuse writes of the type; see managed_configuration_error.
+    Raises ValueError if type_name already exists and replacement was not requested,
+    or if a replacement would drop or change the owner of an owned type.
 
     Replacement is transactional: the existing entry remains registered when
     validation of its successor fails.
     """
     if type_name in CONFIG_TYPE_REGISTRY and not replace:
         raise ValueError(f'Configuration type {type_name} already exists')
+    existing = CONFIG_TYPE_REGISTRY.get(type_name)
+    if existing and existing.managed_by and existing.managed_by != managed_by:
+        raise ValueError(f'Configuration type {type_name} is managed by {existing.managed_by}')
     try:
         item = ConfigTypeRegistryItem.model_construct(
             type=type_name,
@@ -136,7 +143,9 @@ def register_config_type(type_name: str, section: str, model=None, validation_fu
             model=model,
             validation_func=validation_func,
             config_schema=config_schema,
-            check_connection_func=check_connection_func
+            check_connection_func=check_connection_func,
+            managed_by=managed_by,
+            manage_url=manage_url,
         )
         item = ConfigTypeRegistryItem.model_validate(item.model_dump(exclude_unset=True))
         log.info(f'Registering config: {item}')
@@ -146,12 +155,54 @@ def register_config_type(type_name: str, section: str, model=None, validation_fu
         log.error(format_exc())
 
 
-def unregister_config_type(type_name: str) -> bool:
-    """Remove a dynamic configuration type without touching saved records."""
+def unregister_config_type(type_name: str, owner: str | None = None) -> bool:
+    """Remove a dynamic configuration type without touching saved records.
+
+    An owned type is refused when owner names another plugin; a missing owner passes, as in assert_write_allowed.
+    """
+    existing = CONFIG_TYPE_REGISTRY.get(type_name)
+    if existing and existing.managed_by and owner is not None and existing.managed_by != owner:
+        raise ValueError(f'Configuration type {type_name} is managed by {existing.managed_by}')
     removed = CONFIG_TYPE_REGISTRY.pop(type_name, None) is not None
     if removed:
         _registry_changed()
     return removed
+
+
+def manage_url_for(entry: ConfigTypeRegistryItem, project_id: int | None) -> str | None:
+    """The owner's URL with its placeholders filled; None when the project is unknown or the template does not fit."""
+    if not (entry.manage_url and project_id):
+        return None
+    try:
+        return entry.manage_url.format_map({'mode': 'default', 'project_id': project_id})
+    except (KeyError, IndexError, ValueError):
+        return None
+
+
+def owned_entry(type_name, title) -> ConfigTypeRegistryItem | None:
+    """The owned registry entry that claims this type, or this title (an owned type reserves its own name as a title).
+
+    A title matches ignoring case and surrounding spaces, so a near copy of the name is reserved too.
+    """
+    for key in (type_name, title.strip().lower() if isinstance(title, str) else None):
+        entry = CONFIG_TYPE_REGISTRY.get(key) if isinstance(key, str) else None
+        if entry and entry.managed_by:
+            return entry
+    return None
+
+
+def managed_configuration_error(type_name, title: str | None = None, project_id: int | None = None) -> dict | None:
+    """The 403 body for a REST write of an owned type or an owned title; None when the REST API may write it."""
+    entry = owned_entry(type_name, title)
+    if not entry:
+        return None
+    manage_url = manage_url_for(entry, project_id)
+    where = manage_url or f'the {entry.managed_by} API'
+    return {
+        'code': 'managed_configuration',
+        'error': f'{entry.type} is managed by {entry.managed_by}; change it through {where}',
+        'manage_url': manage_url,
+    }
 
 
 LlmModel.check_connection = staticmethod(check_llm_model_connection)

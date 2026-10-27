@@ -83,7 +83,7 @@ def utils():
                                          ConfigurationDetails=SimpleNamespace(model_validate=lambda c: SimpleNamespace(
                                              model_dump=lambda mode: {'id': c.id, 'data': c.data})),
                                          ConfigurationCreateRpc=None, ConfigurationList=None),
-        'models.pd.registry': _stub('models.pd.registry', CONFIG_TYPE_REGISTRY={}),
+        'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, CONFIG_TYPE_REGISTRY={}),
         'folder_access': _stub('folder_access', folder_exclusion_clause=None),
         'routing_access': _stub('routing_access', validate_routing_write=lambda type_, project, payload, existing: payload),
         'llm_model_profiles': _stub('llm_model_profiles', check_llm_model_profile_bounds=lambda *_: None),

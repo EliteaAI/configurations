@@ -99,7 +99,7 @@ def credential_facts():
         sys.modules[package.__name__] = package
     _stub('local_tools', db=SimpleNamespace(get_session=_get_session), VaultClient=object)
     _stub('models.configuration', Configuration=_Configuration)
-    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], CONFIG_TYPE_REGISTRY={
+    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], owned_entry=lambda *_: None, CONFIG_TYPE_REGISTRY={
         'api_cred': SimpleNamespace(config_schema=CONFIG_SCHEMA),
         'plain': SimpleNamespace(config_schema={'properties': {'url': {'type': 'string'}}}),
         'no_schema': SimpleNamespace(config_schema=None),

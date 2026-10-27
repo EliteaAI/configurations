@@ -129,7 +129,7 @@ def methods():
     db = SimpleNamespace(get_session=lambda project_id: _Session(STATE['rows'].get(project_id, [])))
     _stub('local_tools', db=db, VaultClient=_Vault)
     _stub('models.configuration', Configuration=_ConfigurationModel)
-    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], CONFIG_TYPE_REGISTRY={
+    _stub('models.pd.registry', registry_version=lambda: REGISTRY_VERSION[0], owned_entry=lambda *_: None, CONFIG_TYPE_REGISTRY={
         'api_cred': SimpleNamespace(config_schema=CONFIG_SCHEMA),
         'plain': SimpleNamespace(config_schema={'properties': {'url': {'type': 'string'}}}),
         'no_schema': SimpleNamespace(config_schema=None),

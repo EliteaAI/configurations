@@ -5,6 +5,7 @@ from flask import request
 from tools import api_tools, rpc_tools
 from ...local_tools import APIBase, current_user, log, auth, config as c, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
+from ...models.pd.registry import managed_configuration_error
 from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type
 from ...utils import create_configuration, get_configurations
 from ...exceptions import ConfigurationError
@@ -162,11 +163,16 @@ class API(APIBase):
 
         # Checked here rather than in the decorator: the type is only known from the body.
         # MCP re-enters this handler with the caller's identity, so this covers that surface too.
+        if 'type' in data and not isinstance(data['type'], str):
+            return {"error": "type must be a string", "field": "type"}, 400
         if is_tracing_type(data.get('type')) and not can_manage_tracing(project_id, data['author_id']):
             log.warning(
                 f"Blocked tracing configuration create by user {data['author_id']} in project {project_id}"
             )
             return {"error": "Tracing configurations are managed by project admins", "field": "type"}, 403
+        managed = managed_configuration_error(data.get('type'), data.get('elitea_title'), project_id)
+        if managed:
+            return managed, 403
 
         if (data.get('data') or {}).get('refresh_token') and not can_manage_stored_login(project_id, data['author_id']):
             return {"error": "Only project admins can log in or out on a team credential",

@@ -5,6 +5,7 @@ from ...exceptions import ConfigurationError
 from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
+from ...models.pd.registry import managed_configuration_error
 from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type, stored_login_changed
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 from ...folder_access import require_folder_access
@@ -19,20 +20,24 @@ def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
     return not can_manage_tracing(project_id, auth.current_user().get('id'))
 
 
-def read_configuration_type(project_id: int, config_id: int) -> str | None:
+def read_configuration(project_id: int, config_id: int) -> tuple[str | None, dict, str | None]:
     # Project-scoped because this feeds an authorization decision made against the
     # project in the URL, and ids are unique per table rather than per project
     with db.get_session(project_id) as session:
-        return session.query(Configuration.type).filter_by(
+        row = session.query(Configuration.type, Configuration.data, Configuration.elitea_title).filter_by(
             id=config_id, project_id=project_id
-        ).scalar()
+        ).first()
+    return (row[0], row[1] or {}, row[2]) if row else (None, {}, None)
 
 
-def read_configuration_data(project_id: int, config_id: int) -> dict:
-    with db.get_session(project_id) as session:
-        return session.query(Configuration.data).filter_by(
-            id=config_id, project_id=project_id
-        ).scalar() or {}
+def refuse_write(project_id: int, config_type: str | None, title: str | None = None) -> tuple[dict, int] | None:
+    """The error answer when the stored type or the new title forbids this REST write; None when it goes on."""
+    if deny_tracing_access(project_id, config_type):
+        return TRACING_DENIED, 403
+    managed = managed_configuration_error(config_type, title, project_id)
+    if managed:
+        return managed, 403
+    return None
 
 
 class API(APIBase):
@@ -116,15 +121,18 @@ class API(APIBase):
     @require_folder_access('config_id', write=True)
     def put(self, project_id: int, config_id: int, **kwargs):
         # The stored type is authoritative - ConfigurationUpdate cannot carry one
-        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
-            return TRACING_DENIED, 403
+        config_type, stored_data, stored_title = read_configuration(project_id, config_id)
         try:
             parsed = ConfigurationUpdate.model_validate(request.json)
         except Exception as e:
             return {"error": str(e)}, 400
         update_payload = parsed.model_dump(exclude_unset=True)
-        if 'data' in update_payload and stored_login_changed(
-                read_configuration_data(project_id, config_id), update_payload['data']):
+        new_title = update_payload.get('elitea_title')
+        # A record that already carries a reserved title stays editable; only a change to one is refused
+        refused = refuse_write(project_id, config_type, new_title if new_title != stored_title else None)
+        if refused:
+            return refused
+        if 'data' in update_payload and stored_login_changed(stored_data, update_payload['data']):
             if not can_manage_stored_login(project_id, auth.current_user().get('id')):
                 return {"error": STORED_LOGIN_DENIED, "field": "refresh_token"}, 403
         try:
@@ -165,8 +173,9 @@ class API(APIBase):
     @require_folder_access('config_id', write=True)
     def delete(self, project_id: int, config_id: int, **kwargs):
         # Gated too: deleting the admin's credential silently stops project tracing
-        if deny_tracing_access(project_id, read_configuration_type(project_id, config_id)):
-            return TRACING_DENIED, 403
+        refused = refuse_write(project_id, read_configuration(project_id, config_id)[0])
+        if refused:
+            return refused
         try:
             result = delete_configuration(project_id, config_id)
         except ConfigurationError as ce:

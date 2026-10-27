@@ -12,7 +12,7 @@ from .models.configuration import Configuration
 from .models.pd.configuration import (
     ConfigurationCreate, ConfigurationDetails, ConfigurationCreateRpc, ConfigurationList
 )
-from .models.pd.registry import CONFIG_TYPE_REGISTRY
+from .models.pd.registry import CONFIG_TYPE_REGISTRY, owned_entry
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
 from .llm_model_profiles import check_llm_model_profile_bounds
@@ -91,12 +91,30 @@ def _process_secret_fields(data: dict, data_properties: dict, config_type: str) 
             raise ConfigurationError(key, f"Property '{key}' is not valid for configuration type '{config_type}'")
 
 
-def create_configuration(payload: dict) -> Configuration:
+def assert_write_allowed(type_name, title: str | None, owner: str | None = None) -> None:
+    """Refuse a write of an owned type or an owned title when owner names another plugin than the entry's owner.
+
+    owner is a convention of trusted RPC callers, not an identity check. A caller that passes no owner is let
+    through with a warning, because configurations may deploy before the owning plugin passes its name; refuse a
+    missing owner once every owning plugin passes it.
+    """
+    entry = owned_entry(type_name, title)
+    if not entry:
+        return
+    if owner is None:
+        log.warning('Write of owned configuration type %s (title %s) without an owner', type_name, title)
+    elif entry.managed_by != owner:
+        raise ConfigurationError('type', f'{entry.type} is managed by {entry.managed_by}')
+
+
+def create_configuration(payload: dict, owner: str | None = None) -> Configuration:
     """
     Create a new configuration entity in the database from payload.
+    An owned type or an owned title is refused unless owner names its owner plugin.
     Returns the created Configuration instance.
     """
     from .routing_access import validate_routing_write
+    assert_write_allowed(payload.get('type'), payload.get('elitea_title'), owner)
     payload = validate_routing_write(payload.get('type'), payload.get('project_id'), payload)
     try:
         parsed = ConfigurationCreate.model_validate(payload)
@@ -156,9 +174,9 @@ def create_configuration(payload: dict) -> Configuration:
                 raise ConfigurationError("database", f"Database error")
 
 
-def create_if_not_exists(payload: dict) -> tuple[dict, bool]:
+def create_if_not_exists(payload: dict, owner: str | None = None) -> tuple[dict, bool]:
     """
-    Create configuration if such title does not exist.
+    Create configuration if such title does not exist. owner is the calling plugin, see create_configuration.
     Returns (config, created: bool)
     """
     from .local_tools import log
@@ -179,7 +197,7 @@ def create_if_not_exists(payload: dict) -> tuple[dict, bool]:
 
     # Doesn't exist - create it using create_configuration which handles secrets properly
     try:
-        config = create_configuration(payload)
+        config = create_configuration(payload, owner=owner)
         result = ConfigurationDetails.model_validate(config).model_dump(mode='json')
         return result, True
     except Exception:
@@ -187,7 +205,7 @@ def create_if_not_exists(payload: dict) -> tuple[dict, bool]:
         raise
 
 
-def delete_configuration(project_id: int, config_id: int):
+def delete_configuration(project_id: int, config_id: int, owner: str | None = None):
     """
     Delete a configuration by id.
     Returns the serialized configuration dict on success, or None if not found.
@@ -198,6 +216,7 @@ def delete_configuration(project_id: int, config_id: int):
         if not config:
             return None
         from .routing_access import validate_routing_write
+        assert_write_allowed(config.type, None, owner)
         validate_routing_write(config.type, project_id, {}, existing={
             'data': config.data, 'elitea_title': config.elitea_title,
         }, deleting=True)
@@ -209,7 +228,7 @@ def delete_configuration(project_id: int, config_id: int):
 
 
 def update_configuration(project_id: int, config_id: int, update_payload: dict,
-                         expected_generation: int | None = None) -> dict:
+                         expected_generation: int | None = None, owner: str | None = None) -> dict:
     """
     Update an existing configuration entity in the database.
     Properly handles secret fields by storing them in vault.
@@ -227,6 +246,9 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
             raise ConfigurationError("generation", "Configuration was modified concurrently")
 
         from .routing_access import validate_routing_write
+        new_title = update_payload.get('elitea_title')
+        # A record that already carries a reserved title stays editable; only a change to one is refused
+        assert_write_allowed(config.type, new_title if new_title != config.elitea_title else None, owner)
         update_payload = validate_routing_write(config.type, project_id, update_payload, existing={
             'data': config.data, 'elitea_title': config.elitea_title,
         })
