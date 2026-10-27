@@ -44,9 +44,10 @@ def _owner(modules, monkeypatch, project_id=7, actor=42):
     monkeypatch.setattr(modules.guard, 'is_project_admin', lambda p, u: p == project_id and u == actor)
 
 
-def test_off_by_default_and_strict(modules):
-    assert modules.model().enabled is False
+def test_unset_by_default_and_strict(modules):
+    assert modules.model().enabled is None
     assert modules.model(enabled=True).model_dump() == {'enabled': True}
+    assert modules.model(enabled=False).model_dump() == {'enabled': False}
     for value in ['true', 1, [], {}]:
         with pytest.raises(ValidationError):
             modules.model(enabled=value)
