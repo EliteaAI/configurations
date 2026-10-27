@@ -1,6 +1,6 @@
 """EL-7011 owner CR 2026-10-21: a plugin may own a configuration type.
 
-The REST API refuses create, update and delete of an owned type with 409; reads and the RPC path stay open.
+The REST API refuses create, update and delete of an owned type with 403; reads and the RPC path stay open.
 """
 
 import importlib.util
@@ -15,10 +15,11 @@ REGISTRY_PACKAGE = "configurations_7011_registry"
 API_PACKAGE = "configurations_7011_api"
 OWNED = "schedule_settings"
 MANAGE_URL = "/api/v2/elitea_core/schedules/{mode}/{project_id}/settings"
+FILLED_URL = "/api/v2/elitea_core/schedules/default/7/settings"
 REFUSED = {
     "code": "managed_configuration",
-    "error": f"{OWNED} is managed by elitea_core; change it through {MANAGE_URL}",
-    "manage_url": MANAGE_URL,
+    "error": f"{OWNED} is managed by elitea_core; change it through {FILLED_URL}",
+    "manage_url": FILLED_URL,
 }
 
 
@@ -70,6 +71,7 @@ class Harness:
         self.registry = registry
         self.json = None
         self.stored_type = None
+        self.stored_title = None
         self.store_calls = []
 
     def load(self, filename):
@@ -88,6 +90,9 @@ class Harness:
 
             def scalar(self):
                 return harness.stored_type
+
+            def first(self):
+                return (harness.stored_type, {}, harness.stored_title) if harness.stored_type else None
 
             def __enter__(self):
                 return self
@@ -114,7 +119,7 @@ class Harness:
                 db=types.SimpleNamespace(get_session=lambda _project_id: Session()),
                 config=types.SimpleNamespace(ADMINISTRATION_MODE="administration", DEFAULT_MODE="default"),
                 rpc_manager=None)
-        _module(f"{API_PACKAGE}.models.configuration", Configuration=types.SimpleNamespace(type="type", data="data"))
+        _module(f"{API_PACKAGE}.models.configuration", Configuration=types.SimpleNamespace(type="type", data="data", elitea_title="elitea_title"))
         _module(f"{API_PACKAGE}.models.pd.configuration", ConfigurationCreateBase=model,
                 ConfigurationDetails=model, ConfigurationUpdate=model)
         _module(f"{API_PACKAGE}.models.pd.registry",
@@ -154,7 +159,7 @@ def test_el7011_cr_an_unknown_type_is_not_owned(registry, type_name):
 
 
 def test_el7011_cr_the_owned_type_answers_the_refusal(registry):
-    assert registry.managed_configuration_error(OWNED) == REFUSED
+    assert registry.managed_configuration_error(OWNED, project_id=7) == REFUSED
 
 
 def test_el7011_cr_an_owner_without_a_url_still_names_itself(registry):
@@ -167,9 +172,39 @@ def test_el7011_cr_an_owner_without_a_url_still_names_itself(registry):
     }
 
 
+def test_the_manage_url_is_never_a_template(registry):
+    assert registry.managed_configuration_error(OWNED)["manage_url"] is None
+    assert registry.manage_url_for(registry.CONFIG_TYPE_REGISTRY[OWNED], 7) == FILLED_URL
+
+
+def test_an_owned_title_is_reserved_for_any_type(registry):
+    assert registry.managed_configuration_error("project_context", OWNED, 7) == REFUSED
+    assert registry.managed_configuration_error(["unhashable"], "free_title") is None
+
+
 def test_el7011_cr_rest_create_of_an_owned_type_is_refused(harness):
     harness.json = {"type": OWNED, "elitea_title": OWNED, "data": {"allow_run_without_asking": True}}
-    assert harness.load("configurations").post(project_id=7) == (REFUSED, 409)
+    assert harness.load("configurations").post(project_id=7) == (REFUSED, 403)
+    assert harness.store_calls == []
+
+
+def test_rest_create_with_a_reserved_title_is_refused_for_any_type(harness):
+    harness.json = {"type": "project_context", "elitea_title": OWNED, "data": {}}
+    assert harness.load("configurations").post(project_id=7) == (REFUSED, 403)
+    assert harness.store_calls == []
+
+
+def test_rest_create_with_a_non_string_type_is_a_bad_request(harness):
+    harness.json = {"type": ["x"], "data": {}}
+    body, status = harness.load("configurations").post(project_id=7)
+    assert (status, body["field"]) == (400, "type")
+    assert harness.store_calls == []
+
+
+def test_rest_rename_to_a_reserved_title_is_refused(harness):
+    harness.stored_type = "project_context"
+    harness.json = {"elitea_title": OWNED}
+    assert harness.load("configuration").put(project_id=7, config_id=5) == (REFUSED, 403)
     assert harness.store_calls == []
 
 
@@ -182,14 +217,14 @@ def test_el7011_cr_rest_create_of_a_plugin_type_goes_on(harness):
 def test_el7011_cr_rest_update_of_an_owned_record_is_refused(harness):
     harness.stored_type = OWNED
     harness.json = {"data": {"allow_run_without_asking": True}}
-    assert harness.load("configuration").put(project_id=7, config_id=5) == (REFUSED, 409)
+    assert harness.load("configuration").put(project_id=7, config_id=5) == (REFUSED, 403)
     assert harness.store_calls == []
 
 
 def test_el7011_cr_rest_delete_of_an_owned_record_is_refused(harness):
     harness.stored_type = OWNED
     result = harness.load("configuration").delete(project_id=7, config_id=5)
-    assert result == (REFUSED, 409)
+    assert result == (REFUSED, 403)
     assert harness.store_calls == []
 
 
@@ -205,7 +240,7 @@ def test_el7011_cr_rest_update_and_delete_of_a_plugin_type_go_on(harness):
 
 
 def test_el7011_cr_the_register_rpc_passes_the_owner_on(registry, isolated_modules):
-    """The RPC the owner plugin calls; its update and delete RPCs carry no owner check."""
+    """The register RPC carries the owner fields to the registry."""
     calls = []
     package = "configurations_7011_rpc"
     _module(package).__path__ = [str(ROOT)]
@@ -225,3 +260,137 @@ def test_el7011_cr_the_register_rpc_passes_the_owner_on(registry, isolated_modul
 
     assert calls[0]["managed_by"] == "elitea_core"
     assert calls[0]["manage_url"] == MANAGE_URL
+
+
+warnings = []
+
+
+@pytest.fixture
+def utils(registry):
+    warnings.clear()
+    package = "configurations_7011_utils"
+    _module(package).__path__ = [str(ROOT)]
+    for sub in ("models", "models.pd"):
+        _module(f"{package}.{sub}").__path__ = []
+    _module(f"{package}.common_utils", get_personal_project_id=None, get_public_project_id=None)
+    _module(f"{package}.local_tools", db=None, store_secrets=None, purge_secrets=None, event_manager=None,
+            log=types.SimpleNamespace(warning=lambda *args: warnings.append(args)), VaultClient=None)
+    _module(f"{package}.models.configuration", Configuration=object)
+    _module(f"{package}.models.pd.configuration", ConfigurationCreate=None, ConfigurationDetails=None,
+            ConfigurationCreateRpc=None, ConfigurationList=None)
+    _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY=registry.CONFIG_TYPE_REGISTRY,
+            owned_entry=registry.owned_entry)
+    _module(f"{package}.folder_access", folder_exclusion_clause=None)
+    _module(f"{package}.llm_model_profiles", check_llm_model_profile_bounds=None)
+    _exec(f"{package}.exceptions", ROOT / "exceptions.py")
+    return _exec(f"{package}.utils", ROOT / "utils.py")
+
+
+def test_a_write_of_an_owned_entry_refuses_another_owner(utils):
+    for type_name, title in ((OWNED, None), ("project_context", OWNED), ("project_context", " Schedule_Settings ")):
+        with pytest.raises(utils.ConfigurationError):
+            utils.assert_write_allowed(type_name, title, "other_plugin")
+        utils.assert_write_allowed(type_name, title, "elitea_core")
+        utils.assert_write_allowed(type_name, title, None)
+    utils.assert_write_allowed("project_context", "free_title", "other_plugin")
+
+
+def test_a_write_of_an_owned_entry_without_an_owner_logs_a_warning(utils):
+    utils.assert_write_allowed(OWNED, None, None)
+    assert len(warnings) == 1 and OWNED in warnings[0]
+    utils.assert_write_allowed("project_context", "free_title", None)
+    utils.assert_write_allowed(OWNED, None, "elitea_core")
+    assert len(warnings) == 1
+
+
+def test_an_unregister_refuses_another_owner_and_keeps_the_owner_on_register(registry):
+    with pytest.raises(ValueError):
+        registry.unregister_config_type(OWNED, "other_plugin")
+    assert OWNED in registry.CONFIG_TYPE_REGISTRY
+    assert registry.unregister_config_type(OWNED, "elitea_core") is True
+    assert registry.unregister_config_type("llm_model") is True
+    assert registry.unregister_config_type("llm_model") is False
+
+
+def test_a_replace_cannot_drop_or_change_the_owner(registry):
+    with pytest.raises(ValueError):
+        registry.register_config_type(OWNED, "settings", replace=True)
+    with pytest.raises(ValueError):
+        registry.register_config_type(OWNED, "settings", replace=True, managed_by="other_plugin")
+    assert registry.CONFIG_TYPE_REGISTRY[OWNED].managed_by == "elitea_core"
+    registry.register_config_type(OWNED, "settings", replace=True, managed_by="elitea_core")
+    assert registry.CONFIG_TYPE_REGISTRY[OWNED].managed_by == "elitea_core"
+
+
+def _rpc(registry, calls):
+    package = "configurations_7011_rpc_owner"
+    _module(package).__path__ = [str(ROOT)]
+    _module(f"{package}.rpc").__path__ = []
+    _module(f"{package}.models").__path__ = []
+    _module(f"{package}.models.pd").__path__ = []
+    _module(f"{package}.local_tools", log=None)
+    update_model = type("Model", (), {"model_validate": staticmethod(
+        lambda data: types.SimpleNamespace(model_dump=lambda **_: dict(data)))})
+    _module(f"{package}.models.pd.configuration", ConfigurationUpdateRpc=update_model)
+    _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY={},
+            unregister_config_type=lambda *args: calls.append(("unregister", *args)) or True,
+            register_config_type=None)
+    _module(f"{package}.utils",
+            update_configuration=lambda *args, **kwargs: calls.append(("update", kwargs)) or {},
+            create_if_not_exists=lambda *args, **kwargs: calls.append(("create", kwargs)) or ({}, True),
+            expand_configuration=None,
+            delete_configuration=lambda *args, **kwargs: calls.append(("delete", kwargs)) or {})
+    return _exec(f"{package}.rpc.main", ROOT / "rpc" / "main.py").RPC()
+
+
+def test_the_rpc_passes_the_caller_as_owner(registry):
+    calls = []
+    rpc = _rpc(registry, calls)
+    rpc.update_configuration_rpc(7, 5, {"data": {}}, owner="elitea_core")
+    rpc.configurations_delete(7, 5, owner="elitea_core")
+    rpc.create_if_not_exists({"type": OWNED}, owner="elitea_core")
+    assert [kwargs["owner"] for _, kwargs in calls] == ["elitea_core"] * 3
+
+
+def test_the_unregister_rpc_passes_the_caller_as_owner(registry):
+    calls = []
+    rpc = _rpc(registry, calls)
+    rpc.configurations_unregister(OWNED, owner="elitea_core")
+    assert calls == [("unregister", OWNED, "elitea_core")]
+
+
+def test_the_rpc_without_a_caller_passes_no_owner(registry):
+    calls = []
+    rpc = _rpc(registry, calls)
+    rpc.update_configuration_rpc(7, 5, {"data": {}})
+    rpc.configurations_delete(7, 5)
+    rpc.create_if_not_exists({"type": OWNED})
+    assert [kwargs["owner"] for _, kwargs in calls] == [None] * 3
+
+
+def test_a_rename_to_a_reserved_title_is_refused_but_an_old_reserved_title_stays_editable(harness):
+    harness.stored_type = "project_context"
+    harness.stored_title = OWNED
+    harness.json = {"elitea_title": OWNED, "data": {}}
+    assert harness.load("configuration").put(project_id=7, config_id=5)[1] == 200
+    harness.stored_title = "free_title"
+    assert harness.load("configuration").put(project_id=7, config_id=5) == (REFUSED, 403)
+
+
+def test_available_lists_the_owner_and_the_filled_manage_url(registry):
+    package = "configurations_7011_available"
+    _module(package).__path__ = [str(ROOT)]
+    for sub in ("api", "api.v2", "models", "models.pd"):
+        _module(f"{package}.{sub}").__path__ = []
+    args = types.SimpleNamespace(getlist=lambda _name: [], get=lambda *_a, **_k: None)
+    _module("flask", request=types.SimpleNamespace(args=args))
+    _module(f"{package}.local_tools", APIBase=type("APIBase", (), {}), register_openapi=lambda **_: (lambda f: f))
+    _module(f"{package}.models.pd.configuration", ConfigurationCreateBase=types.SimpleNamespace(
+        model_json_schema=lambda: {"properties": {}}))
+    _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY={OWNED: registry.CONFIG_TYPE_REGISTRY[OWNED]},
+            manage_url_for=registry.manage_url_for)
+    _module(f"{package}.tracing_access", current_actor_id=lambda: 1, hidden_tracing_types=lambda *_: set())
+    api = _exec(f"{package}.api.v2.available", ROOT / "api" / "v2" / "available.py").API()
+    items, status = api.get(project_id=7)
+    assert status == 200
+    assert (items[0]["managed_by"], items[0]["manage_url"]) == ("elitea_core", FILLED_URL)

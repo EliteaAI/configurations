@@ -34,12 +34,12 @@ class RPC:
         )
 
     @web.rpc('configurations_unregister')
-    def configurations_unregister(self, type_name: str) -> bool:
-        return unregister_config_type(type_name)
+    def configurations_unregister(self, type_name: str, owner: str | None = None) -> bool:
+        return unregister_config_type(type_name, owner)
     
     @web.rpc('configurations_create_if_not_exists')
-    def create_if_not_exists(self, payload: dict) -> tuple[dict, bool]:
-        return create_if_not_exists(payload)
+    def create_if_not_exists(self, payload: dict, owner: str | None = None) -> tuple[dict, bool]:
+        return create_if_not_exists(payload, owner=owner)
 
 
     @web.rpc('configurations_list_types')
@@ -53,14 +53,16 @@ class RPC:
     #     return entry.model if entry and entry.model else None
 
     @web.rpc('configurations_update', 'update_configuration_rpc')
-    def update_configuration_rpc(self, project_id: int, config_id: int, payload: dict) -> dict:
+    def update_configuration_rpc(self, project_id: int, config_id: int, payload: dict,
+                                 owner: str | None = None) -> dict:
         parsed = ConfigurationUpdateRpc.model_validate(payload)
         update_payload = parsed.model_dump(exclude_unset=True)
-        return update_configuration(project_id, config_id, update_payload=update_payload)
+        return update_configuration(project_id, config_id, update_payload=update_payload,
+                                    owner=owner)
 
     @web.rpc('configurations_delete')
-    def configurations_delete(self, project_id: int, config_id: int) -> bool:
-        return delete_configuration(project_id, config_id) is not None
+    def configurations_delete(self, project_id: int, config_id: int, owner: str | None = None) -> bool:
+        return delete_configuration(project_id, config_id, owner=owner) is not None
 
     @web.rpc('configurations_expand')
     def configurations_expand(

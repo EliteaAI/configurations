@@ -20,32 +20,24 @@ def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
     return not can_manage_tracing(project_id, auth.current_user().get('id'))
 
 
-def read_configuration_type(project_id: int, config_id: int) -> str | None:
+def read_configuration(project_id: int, config_id: int) -> tuple[str | None, dict, str | None]:
     # Project-scoped because this feeds an authorization decision made against the
     # project in the URL, and ids are unique per table rather than per project
     with db.get_session(project_id) as session:
-        return session.query(Configuration.type).filter_by(
+        row = session.query(Configuration.type, Configuration.data, Configuration.elitea_title).filter_by(
             id=config_id, project_id=project_id
-        ).scalar()
+        ).first()
+    return (row[0], row[1] or {}, row[2]) if row else (None, {}, None)
 
 
-def refuse_write(project_id: int, config_id: int) -> tuple[dict, int] | None:
-    """The error answer when the stored type forbids this REST write; None when the write goes on."""
-    # The stored type is authoritative - ConfigurationUpdate cannot carry one
-    config_type = read_configuration_type(project_id, config_id)
+def refuse_write(project_id: int, config_type: str | None, title: str | None = None) -> tuple[dict, int] | None:
+    """The error answer when the stored type or the new title forbids this REST write; None when it goes on."""
     if deny_tracing_access(project_id, config_type):
         return TRACING_DENIED, 403
-    managed = managed_configuration_error(config_type)
+    managed = managed_configuration_error(config_type, title, project_id)
     if managed:
-        return managed, 409
+        return managed, 403
     return None
-
-
-def read_configuration_data(project_id: int, config_id: int) -> dict:
-    with db.get_session(project_id) as session:
-        return session.query(Configuration.data).filter_by(
-            id=config_id, project_id=project_id
-        ).scalar() or {}
 
 
 class API(APIBase):
@@ -128,16 +120,19 @@ class API(APIBase):
     )
     @require_folder_access('config_id', write=True)
     def put(self, project_id: int, config_id: int, **kwargs):
-        refused = refuse_write(project_id, config_id)
-        if refused:
-            return refused
+        # The stored type is authoritative - ConfigurationUpdate cannot carry one
+        config_type, stored_data, stored_title = read_configuration(project_id, config_id)
         try:
             parsed = ConfigurationUpdate.model_validate(request.json)
         except Exception as e:
             return {"error": str(e)}, 400
         update_payload = parsed.model_dump(exclude_unset=True)
-        if 'data' in update_payload and stored_login_changed(
-                read_configuration_data(project_id, config_id), update_payload['data']):
+        new_title = update_payload.get('elitea_title')
+        # A record that already carries a reserved title stays editable; only a change to one is refused
+        refused = refuse_write(project_id, config_type, new_title if new_title != stored_title else None)
+        if refused:
+            return refused
+        if 'data' in update_payload and stored_login_changed(stored_data, update_payload['data']):
             if not can_manage_stored_login(project_id, auth.current_user().get('id')):
                 return {"error": STORED_LOGIN_DENIED, "field": "refresh_token"}, 403
         try:
@@ -178,7 +173,7 @@ class API(APIBase):
     @require_folder_access('config_id', write=True)
     def delete(self, project_id: int, config_id: int, **kwargs):
         # Gated too: deleting the admin's credential silently stops project tracing
-        refused = refuse_write(project_id, config_id)
+        refused = refuse_write(project_id, read_configuration(project_id, config_id)[0])
         if refused:
             return refused
         try:
