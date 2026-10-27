@@ -56,10 +56,22 @@ def unavailable_reason(app: dict | None, project_id: int | None, config_type: st
         return f"{name} is no longer offered for {config_type.capitalize()} credentials by your administrator"
     if app.get('enabled') is False:
         return f"{name} was disabled by your administrator"
-    allowed = app.get('allowed_project_ids') or []
-    if allowed and project_id is not None and int(project_id) not in {int(i) for i in allowed}:
+    if project_id is not None and not covers_project(app, project_id):
         return f"{name} is not available in this project"
     return None
+
+
+def covers_project(app: dict | None, project_id: int) -> bool:
+    """Whether the app applies in ``project_id``.
+
+    The public project (``ai_project_id``) in the app's projects means **every** project, the way
+    public shared credentials and default models apply everywhere; team projects mean only those.
+    An empty list is treated the same as Public (apps saved before Projects became required).
+    """
+    allowed = {int(i) for i in ((app or {}).get('allowed_project_ids') or [])}
+    if not allowed or get_public_project_id() in allowed:
+        return True
+    return int(project_id) in allowed
 
 
 def _parse_uuid(value):

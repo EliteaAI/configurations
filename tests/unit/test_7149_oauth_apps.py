@@ -280,3 +280,15 @@ def test_credential_types_keep_the_provider_order(modules):
     data = modules.apps.validated_app_data(
         {'client_id': 'c', 'client_secret': 's', 'credential_types': ['sharepoint', 'teams', 'teams']})
     assert data['credential_types'] == ['teams', 'sharepoint']
+
+
+@pytest.mark.parametrize('allowed,project,expected', [
+    ([1], 5, None),                 # the public project (stub id 1) = every project
+    ([1], 1, None),
+    ([7], 5, 'not available'),      # a team project only
+    ([7], 7, None),
+    ([], 5, None),                  # empty = all (apps saved before Projects was required)
+])
+def test_public_project_means_every_project(modules, allowed, project, expected):
+    reason = modules.apps.unavailable_reason({**APP, 'allowed_project_ids': allowed}, project, 'teams')
+    assert (reason is None) if expected is None else (expected in reason)
