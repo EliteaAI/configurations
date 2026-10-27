@@ -354,3 +354,23 @@ def test_a_public_app_is_unavailable_where_the_project_has_its_own(modules, monk
     _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, TEAM_APP)
     assert 'not available in this project' in modules.apps.unavailable_reason(PUBLIC_DEFAULT, 3, 'outlook')
     assert modules.apps.unavailable_reason(PUBLIC_DEFAULT, 5, 'outlook') is None
+
+
+def test_a_default_app_cuts_the_tier_non_default_apps(modules, monkeypatch):
+    other = {**PUBLIC_DEFAULT, 'label': 'Public other', 'is_default': False}
+    _set_apps(modules, monkeypatch, other, PUBLIC_DEFAULT)
+    assert _names(modules, 5, 'outlook') == (['Public default'], 'default')
+
+
+def test_without_a_default_every_non_default_app_is_listed(modules, monkeypatch):
+    second = {**TEAM_APP, 'label': 'Team app 2'}
+    _set_apps(modules, monkeypatch, TEAM_APP, second)
+    assert _names(modules, 3, 'teams') == (['Team app', 'Team app 2'], 'choice')
+
+
+@pytest.mark.parametrize('credential_type', ['teams', None, 'jira'])
+def test_proxy_client_requires_a_type_the_app_serves(modules, monkeypatch, credential_type):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: modules.apps._public_apps()[0])
+    with pytest.raises(modules.apps.OAuthAppUnavailable):
+        modules.apps.resolve_app_client('uuid-Public default', 5, credential_type)

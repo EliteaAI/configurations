@@ -160,9 +160,15 @@ def resolve_oauth_app(app_id, project_id: int | None, toolkit_type: str | None, 
     return resolved
 
 
-def resolve_app_client(app_id, project_id: int | None) -> dict:
-    """Client ID, secret and token endpoint for the OAuth proxy; the secret may go to that endpoint only."""
-    resolved = resolve_oauth_app(app_id, project_id, toolkit_type=None, unsecret=True)
+def resolve_app_client(app_id, project_id: int | None, credential_type: str | None) -> dict:
+    """Client ID, secret and token endpoint for the OAuth proxy; the secret may go to that endpoint only.
+
+    ``app_id`` and ``credential_type`` come from the browser, so the app must serve that type in
+    that project, exactly as for a saved credential.
+    """
+    if credential_type not in CREDENTIAL_PROVIDERS:
+        raise OAuthAppUnavailable(f"Unsupported credential type: {credential_type}")
+    resolved = resolve_oauth_app(app_id, project_id, toolkit_type=credential_type, unsecret=True)
     config = _load_app(app_id)
     return {
         'client_id': resolved['client_id'],
@@ -241,7 +247,11 @@ def _usable_apps(project_id: int, toolkit_type: str | None) -> list[dict]:
 
 
 def list_available_apps(project_id: int, toolkit_type: str | None = None) -> list[dict]:
-    """Apps of the active tier a project member may pick (credential type's provider), without secrets."""
+    """Apps of the active tier a project member may pick (credential type's provider), without secrets.
+
+    Only the Default app when the tier has one (the others are cut), else only its non-default apps,
+    so the UI needs no filtering: more than one row is a picker, one Default row hides the switcher.
+    """
     result = []
     for app in _usable_apps(project_id, toolkit_type):
         config = app['_config']
@@ -256,7 +266,7 @@ def list_available_apps(project_id: int, toolkit_type: str | None = None) -> lis
             'scopes': scopes.get(toolkit_type, []) if toolkit_type else scopes,
             'auto_refresh_token': app.get('auto_refresh_token', True),
         })
-    return result
+    return [row for row in result if row['is_default']] or result
 
 
 def credential_mode(apps: list[dict]) -> str:
