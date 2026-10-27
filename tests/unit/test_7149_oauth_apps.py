@@ -42,6 +42,8 @@ def modules(monkeypatch):
         monkeypatch.setitem(sys.modules, spec.name, mod)
         spec.loader.exec_module(mod)
         loaded[name] = mod
+    # No database in unit tests: the stored app list is set per test with _set_apps
+    monkeypatch.setattr(loaded['oauth_apps'], '_public_apps', lambda: [])
     return types.SimpleNamespace(apps=loaded['oauth_apps'], error=loaded['exceptions'].ConfigurationError)
 
 
@@ -310,3 +312,45 @@ def test_an_update_cannot_drop_all_projects(modules):
 
 def test_no_project_never_resolves_an_app(modules):
     assert 'not available in this project' in modules.apps.unavailable_reason(APP, None, 'teams')
+
+
+def _set_apps(modules, monkeypatch, *apps):
+    configs = [types.SimpleNamespace(data=dict(a), label=a['label'], project_id=1,
+                                     uuid=f"uuid-{a['label']}", created_at=None) for a in apps]
+    monkeypatch.setattr(modules.apps, '_public_apps', lambda: configs)
+
+
+PUBLIC_DEFAULT = {**APP, 'label': 'Public default', 'allowed_project_ids': [1], 'is_default': True,
+                  'credential_types': ['outlook', 'sharepoint']}
+TEAM_APP = {**APP, 'label': 'Team app', 'allowed_project_ids': [3], 'is_default': False,
+            'credential_types': ['teams', 'outlook', 'sharepoint']}
+
+
+def _names(modules, project_id, config_type):
+    rows = modules.apps.list_available_apps(project_id, config_type)
+    return [r['name'] for r in rows], modules.apps.credential_mode(rows)
+
+
+def test_team_project_apps_replace_public_apps(modules, monkeypatch):
+    """Public Default (Outlook/SharePoint) + a non-default team app: the team project sees only its app."""
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, TEAM_APP)
+    assert _names(modules, 3, 'outlook') == (['Team app'], 'choice')
+    assert _names(modules, 3, 'teams') == (['Team app'], 'choice')
+
+
+def test_other_projects_keep_the_public_tier(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, TEAM_APP)
+    assert _names(modules, 5, 'outlook') == (['Public default'], 'default')
+    assert _names(modules, 5, 'teams') == ([], 'custom')
+
+
+def test_project_tier_counts_only_types_switched_on(modules, monkeypatch):
+    """A team app without Outlook does not hide the Public Outlook app in that project."""
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, {**TEAM_APP, 'credential_types': ['teams']})
+    assert _names(modules, 3, 'outlook') == (['Public default'], 'default')
+
+
+def test_a_public_app_is_unavailable_where_the_project_has_its_own(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, TEAM_APP)
+    assert 'not available in this project' in modules.apps.unavailable_reason(PUBLIC_DEFAULT, 3, 'outlook')
+    assert modules.apps.unavailable_reason(PUBLIC_DEFAULT, 5, 'outlook') is None

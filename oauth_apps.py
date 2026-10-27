@@ -61,7 +61,25 @@ def unavailable_reason(app: dict | None, project_id: int | None, config_type: st
         return f"{name} has no projects assigned by your administrator"
     if project_id is None or not covers_project(app, project_id):
         return f"{name} is not available in this project"
+    if is_public_app(app) and _project_has_own_apps(project_id, config_type, provider):
+        # The project's own apps replace the Public tier in this project
+        return f"{name} is not available in this project"
     return None
+
+
+def _project_has_own_apps(project_id: int, config_type: str | None, provider) -> bool:
+    """Whether ``project_id`` has a usable app of its own (not Public) for this provider and type."""
+    if int(project_id) == get_public_project_id():
+        return False
+    for config in _public_apps():
+        other = _app_view(config)
+        if is_public_app(other) or provider_of(other) is not provider or other.get('enabled') is False:
+            continue
+        if config_type and not serves(other, config_type):
+            continue
+        if int(project_id) in {int(i) for i in other.get('allowed_project_ids') or []}:
+            return True
+    return False
 
 
 def covers_project(app: dict | None, project_id: int) -> bool:
@@ -75,6 +93,25 @@ def covers_project(app: dict | None, project_id: int) -> bool:
     if not allowed:
         return False
     return get_public_project_id() in allowed or int(project_id) in allowed
+
+
+def is_public_app(app: dict | None) -> bool:
+    """An app assigned to the public project serves every project (the Public tier)."""
+    return get_public_project_id() in {int(i) for i in ((app or {}).get('allowed_project_ids') or [])}
+
+
+def _active_tier(apps: list[dict], project_id: int) -> list[dict]:
+    """Apps of the tier that applies in ``project_id``: a team project's own apps fully replace the
+    Public tier there, even when a Public app is Default and the project's apps are not (spec 4.1).
+
+    ``apps`` are already usable in the project (enabled, type on, covering the project).
+    """
+    if int(project_id) != get_public_project_id():
+        own = [app for app in apps if int(project_id) in {int(i) for i in app.get('allowed_project_ids') or []}
+               and not is_public_app(app)]
+        if own:
+            return own
+    return [app for app in apps if is_public_app(app)]
 
 
 def _parse_uuid(value):
@@ -194,13 +231,20 @@ def _public_apps() -> list[Configuration]:
         ).order_by(Configuration.created_at).all()
 
 
-def list_available_apps(project_id: int, toolkit_type: str | None = None) -> list[dict]:
-    """Apps a project member may pick (of the credential type's provider), without any secret material."""
-    result = []
+def _usable_apps(project_id: int, toolkit_type: str | None) -> list[dict]:
+    usable = []
     for config in _public_apps():
         app = _app_view(config)
-        if unavailable_reason(app, project_id, toolkit_type):
-            continue
+        if not unavailable_reason(app, project_id, toolkit_type):
+            usable.append({**app, '_config': config})
+    return _active_tier(usable, project_id)
+
+
+def list_available_apps(project_id: int, toolkit_type: str | None = None) -> list[dict]:
+    """Apps of the active tier a project member may pick (credential type's provider), without secrets."""
+    result = []
+    for app in _usable_apps(project_id, toolkit_type):
+        config = app['_config']
         scopes = app.get('scopes') or {}
         result.append({
             'id': str(config.uuid),
