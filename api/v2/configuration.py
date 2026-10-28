@@ -5,13 +5,15 @@ from ...exceptions import ConfigurationError
 from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, register_openapi
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
-from ...models.pd.registry import managed_configuration_error
+from ...models.pd.registry import ADMIN_MANAGED_TYPES, managed_configuration_error
 from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type, stored_login_changed
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 from ...folder_access import require_folder_access
+from ...oauth_apps import decorate_credentials
 
 TRACING_DENIED = {"error": "Tracing configurations are managed by project admins"}
 STORED_LOGIN_DENIED = "Only project admins can log in or out on a team credential"
+ADMIN_MANAGED_DENIED = {"error": "This configuration is managed in the Admin Portal"}
 
 
 def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
@@ -34,6 +36,8 @@ def refuse_write(project_id: int, config_type: str | None, title: str | None = N
     """The error answer when the stored type or the new title forbids this REST write; None when it goes on."""
     if deny_tracing_access(project_id, config_type):
         return TRACING_DENIED, 403
+    if config_type in ADMIN_MANAGED_TYPES:
+        return ADMIN_MANAGED_DENIED, 403
     managed = managed_configuration_error(config_type, title, project_id)
     if managed:
         return managed, 403
@@ -81,6 +85,9 @@ class API(APIBase):
             # invoking user; nothing machine-facing fetches a configuration by id.
             if deny_tracing_access(project_id, config.type):
                 return {"error": "Configuration not found"}, 404
+            # OAuth apps are read through the Admin Portal API, which never returns the secret
+            if config.type in ADMIN_MANAGED_TYPES:
+                return {"error": "Configuration not found"}, 404
 
             is_pinned = rpc_manager.timeout(2).social_is_pinned(
                 project_id=project_id, entity='configuration', entity_id=config_id
@@ -88,6 +95,7 @@ class API(APIBase):
             setattr(config, 'is_pinned', is_pinned)
 
             config_data = ConfigurationDetails.model_validate(config).model_dump(mode='json')
+            decorate_credentials([config_data], project_id)
 
             config_data["options"] = get_options_for_nested_fields(
                 project_id, public_project_id, config.type, True  # Include shared configs

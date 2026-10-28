@@ -80,7 +80,8 @@ class API(APIBase):
                 payload=data,
                 current_project_id=project_id,
                 user_id=auth.current_user().get('id'),
-                unsecret=True
+                unsecret=True,
+                config_type=config_type,
             )
             result = model.check_connection(data)
             if result is None:

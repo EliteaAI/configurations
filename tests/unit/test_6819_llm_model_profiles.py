@@ -402,7 +402,7 @@ def utils_module():
         'models.pd.configuration': _stub('models.pd.configuration', ConfigurationCreate=None,
                                          ConfigurationDetails=MagicMock(), ConfigurationCreateRpc=None,
                                          ConfigurationList=None),
-        'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, CONFIG_TYPE_REGISTRY={
+        'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, ADMIN_MANAGED_TYPES=frozenset({'oauth_app'}), CONFIG_TYPE_REGISTRY={
             'llm_model': types.SimpleNamespace(model=llm_model.LlmModel, config_schema=llm_model.LlmModel.model_json_schema()),
         }),
         'folder_access': _stub('folder_access', folder_exclusion_clause=None),

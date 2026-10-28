@@ -79,6 +79,7 @@ class API(APIBase):
                     current_project_id=project_id,
                     user_id=user_id,
                     unsecret=True,
+                    config_type=config_type,
                 )
                 result = registry_entry.check_connection(data)
                 if result is None:

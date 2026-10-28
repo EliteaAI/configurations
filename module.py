@@ -8,6 +8,7 @@ from .generation_column import ensure_generation_column
 from .local_tools import db
 from .environment_settings_seed import ensure_default_environment_settings
 from .service_prompt_seed import ensure_default_service_prompts
+from .oauth_app_seed import ensure_default_oauth_app
 
 class Module(module.ModuleModel):
     """ Configurations plugin module """
@@ -36,6 +37,9 @@ class Module(module.ModuleModel):
             ensure_default_environment_settings()
         except Exception as e:
             log.warning(f'Failed to ensure default environment settings: {e}')
+
+        log.info('Ensuring the default OAuth app is present')
+        ensure_default_oauth_app(self.descriptor.config)
 
         self._register_openapi()
         self._register_admin_tasks()
