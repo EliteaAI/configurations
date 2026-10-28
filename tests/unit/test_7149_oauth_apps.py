@@ -598,3 +598,36 @@ def test_outside_its_projects_the_app_is_never_named(modules):
         reason = modules.apps.unavailable_reason(app, project, 'teams')
         assert 'not available in this project' in reason and 'Contoso' not in reason
     assert 'Contoso' in modules.apps.unavailable_reason({**APP, 'enabled': False}, 5, 'teams')  # in scope: named
+
+
+# ms_graph: a 4th Entra credential type, opt-in per app, with free-text Graph scopes
+
+def test_unset_credential_types_do_not_serve_opt_in_ms_graph(modules):
+    assert modules.apps.unavailable_reason(APP, 5, 'ms_graph') is not None
+    assert modules.apps.unavailable_reason({**APP, 'credential_types': ['ms_graph']}, 5, 'ms_graph') is None
+    assert not modules.apps.serves(APP, 'ms_graph')
+    assert modules.apps.serves({**APP, 'credential_types': ['ms_graph']}, 'ms_graph')
+
+
+def test_admin_view_shows_the_effective_credential_types(modules):
+    view = modules.apps.admin_view({'data': APP, 'label': 'Contoso', 'uuid': 'u', 'id': 1})
+    assert view['credential_types'] == ['teams', 'outlook', 'sharepoint']
+    view = modules.apps.admin_view({'data': {**APP, 'credential_types': ['ms_graph']}, 'label': 'C', 'uuid': 'u', 'id': 1})
+    assert view['credential_types'] == ['ms_graph']
+
+
+def test_ms_graph_scopes_are_free_text_graph_permissions(modules):
+    data = modules.apps.validated_app_data(
+        {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': ['ms_graph'],
+         'scopes': {'ms_graph': ['https://graph.microsoft.com/Mail.Read', 'Files.ReadWrite.All', 'mail.read',
+                                 'offline_access']}})
+    assert data['scopes'] == {'ms_graph': ['Mail.Read', 'Files.ReadWrite.All']}
+
+
+@pytest.mark.parametrize('scopes', [['https://contoso.sharepoint.com/AllSites.Read'], ['Mail'],
+                                    ['https://graph.microsoft.com/.default', 'Mail.Read']])
+def test_ms_graph_scopes_reject_other_resources(modules, scopes):
+    with pytest.raises(modules.error):
+        modules.apps.validated_app_data(
+            {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': ['ms_graph'],
+             'scopes': {'ms_graph': scopes}})

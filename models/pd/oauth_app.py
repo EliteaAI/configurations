@@ -5,6 +5,7 @@ Outlook, SharePoint); a new provider adds an ``OAuthProvider`` entry here and it
 connection check, and the storage, write-only secret, project allow-list and Default /
 Custom app modes are reused unchanged.
 """
+import re
 from dataclasses import dataclass
 from typing import Literal
 
@@ -28,16 +29,24 @@ class OAuthProvider:
     default_discovery_endpoint: str
     discovery_endpoint_hint: str
     token_path: str
+    # Types an app serves when its credential_types is unset (apps saved before a type was added);
+    # a type left out is opt-in: the admin switches it on per app. Empty means every type.
+    default_credential_types: tuple[str, ...] = ()
+    # Types whose scopes are free text, checked only to be the provider's own permissions
+    free_scope_types: tuple[str, ...] = ()
 
 
 OAUTH_PROVIDERS: dict[str, OAuthProvider] = {
     MICROSOFT_ENTRA: OAuthProvider(
         label='Microsoft Entra ID',
-        credential_types=('teams', 'outlook', 'sharepoint'),
+        credential_types=('teams', 'outlook', 'sharepoint', 'ms_graph'),
         hosts=frozenset({'login.microsoftonline.com'}),
         default_discovery_endpoint='https://login.microsoftonline.com/organizations',
         discovery_endpoint_hint='https://login.microsoftonline.com/<tenant_id or organizations>',
         token_path='/oauth2/v2.0/token',
+        # Microsoft Graph (low-level, any endpoint) is switched on per app by the admin
+        default_credential_types=('teams', 'outlook', 'sharepoint'),
+        free_scope_types=('ms_graph',),
     ),
 }
 
@@ -48,6 +57,34 @@ CREDENTIAL_PROVIDERS = {
     for credential_type in provider.credential_types
 }
 OAUTH_APP_TOOLKIT_TYPES = tuple(CREDENTIAL_PROVIDERS)
+
+
+GRAPH_RESOURCE_PREFIX = 'https://graph.microsoft.com/'
+GRAPH_DEFAULT_SCOPE = f'{GRAPH_RESOURCE_PREFIX}.default'
+_GRAPH_PERMISSION_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)+$')
+_OIDC_SCOPES = {'openid', 'profile', 'email', 'offline_access'}
+
+
+def normalize_graph_scopes(scopes: list[str]) -> list[str]:
+    """Free-text Microsoft Graph permissions (mirrors elitea-sdk ms_graph): prefix stripped, OIDC scopes
+    and duplicates dropped, other resources rejected — the token is for Microsoft Graph only."""
+    result, seen = [], set()
+    for scope in scopes:
+        text = scope.strip()
+        if not text or text.lower() in _OIDC_SCOPES:
+            continue
+        if text.lower().startswith(GRAPH_RESOURCE_PREFIX):
+            text = text[len(GRAPH_RESOURCE_PREFIX):]
+        if text.lower() == '.default':
+            text = GRAPH_DEFAULT_SCOPE
+        elif not _GRAPH_PERMISSION_RE.match(text):
+            raise ValueError(f"'{scope}' is not a Microsoft Graph permission, e.g. Mail.Read")
+        if text.lower() not in seen:
+            seen.add(text.lower())
+            result.append(text)
+    if GRAPH_DEFAULT_SCOPE in result and len(result) > 1:
+        raise ValueError(f'{GRAPH_DEFAULT_SCOPE} cannot be combined with other permissions')
+    return result
 
 
 def provider_of(data: dict | None) -> OAuthProvider:
@@ -135,6 +172,10 @@ class OAuthApp(BaseModel):
         unknown = set(self.scopes) - set(provider.credential_types)
         if unknown:
             raise ValueError(f"{provider.label} apps have no scopes for: {', '.join(sorted(unknown))}")
+        for credential_type in provider.free_scope_types:
+            if credential_type in self.scopes:
+                self.scopes[credential_type] = normalize_graph_scopes(self.scopes[credential_type])
+        self.scopes = {key: scopes for key, scopes in self.scopes.items() if scopes}
         if self.credential_types is not None:
             types = list(dict.fromkeys(self.credential_types))
             foreign = set(types) - set(provider.credential_types)
@@ -148,10 +189,14 @@ class OAuthApp(BaseModel):
 
 
 def serves(app: dict | None, credential_type: str | None) -> bool:
-    """Whether the app is switched on for this credential type (unset = every type of its provider)."""
+    """Whether the app is switched on for this credential type (unset = the provider's default types)."""
     if not credential_type:
         return True
     types = (app or {}).get('credential_types')
     if types is None:
-        return credential_type in provider_of(app).credential_types
+        return credential_type in default_credential_types(provider_of(app))
     return credential_type in types
+
+
+def default_credential_types(provider: OAuthProvider) -> tuple[str, ...]:
+    return provider.default_credential_types or provider.credential_types

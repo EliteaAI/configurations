@@ -21,7 +21,7 @@ from .local_tools import db, event_manager, log, purge_secrets, VaultClient
 from .models.configuration import Configuration
 from .models.pd.oauth_app import (
     CREDENTIAL_PROVIDERS, MICROSOFT_ENTRA, OAUTH_APP_TOOLKIT_TYPES, OAUTH_APP_TYPE, OAUTH_PROVIDERS, OAuthApp,
-    provider_of, serves, token_endpoint,
+    default_credential_types, provider_of, serves, token_endpoint,
 )
 
 APP_REFERENCE_FIELD = 'oauth_app_id'
@@ -536,6 +536,9 @@ def admin_view(config: Configuration | dict) -> dict:
         data, label, uuid_value, config_id = config.data or {}, config.label, config.uuid, config.id
         created_at, updated_at = config.created_at, config.updated_at
     view = {key: value for key, value in data.items() if key != 'client_secret'}
+    if view.get('credential_types') is None:
+        # The types an unset list means, so the dialog shows opt-in types (ms_graph) as off
+        view['credential_types'] = list(default_credential_types(provider_of(data)))
     view.update(
         id=str(uuid_value), config_id=config_id, name=label, provider=data.get('provider') or MICROSOFT_ENTRA,
         client_secret_set=bool(data.get('client_secret')),
