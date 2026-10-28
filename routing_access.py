@@ -5,6 +5,7 @@ from .exceptions import ConfigurationError
 from .models.pd.auto_routing import AutoRoutingProjectSettings
 from .models.pd.context_window_settings import ContextWindowProjectSettings
 from .models.pd.environment_settings import EnvironmentSettings
+from .models.pd.project_skills import ProjectSkillsSettings
 from .models.pd.web_search_settings import WebSearchProjectSettings
 from .tracing_access import current_actor_id, is_own_personal_project, is_project_admin
 
@@ -83,6 +84,20 @@ def _validate_context_window_write(project_id, payload, deleting=False):
     return result
 
 
+def _validate_project_skills_write(project_id, payload, deleting=False):
+    result = dict(payload)
+    if result.get('shared') is True:
+        raise ConfigurationError('shared', 'Project skills settings belong to one project')
+    if result.get('elitea_title', 'project_skills') != 'project_skills':
+        raise ConfigurationError('elitea_title', 'Project skills settings use the ID project_skills')
+    actor = current_actor_id()
+    if not actor or not (is_project_admin(project_id, actor) or is_own_personal_project(project_id, actor)):
+        raise ConfigurationError('type', 'Project skills settings are managed by project admins')
+    if not deleting and result.get('data') is not None:
+        result['data'] = _validated_data(ProjectSkillsSettings, result['data'])
+    return result
+
+
 def validate_routing_write(config_type, project_id, payload, *, existing=None, deleting=False):
     """Return a copy with validated routing data, never trust body author_id.
 
@@ -95,6 +110,8 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         return _validate_web_search_write(project_id, payload, deleting=deleting)
     if config_type == 'context_window_settings':
         return _validate_context_window_write(project_id, payload, deleting=deleting)
+    if config_type == 'project_skills':
+        return _validate_project_skills_write(project_id, payload, deleting=deleting)
     if config_type not in {'environment_settings', 'auto_routing'}:
         return payload
     result = dict(payload)

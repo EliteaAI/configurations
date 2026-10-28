@@ -12,6 +12,7 @@ from .llm_model_connection import check_llm_model_connection
 from .project_context import ProjectContext
 from .project_chat_config import ProjectChatConfig
 from .project_icon import ProjectIcon
+from .project_skills import ProjectSkillsSettings
 from .service_prompt import ServicePrompt
 from ...local_tools import log
 
@@ -276,6 +277,12 @@ register_config_type(
     type_name='project_chat_config',
     section='project_settings',
     model=ProjectChatConfig,
+)
+
+register_config_type(
+    type_name='project_skills',
+    section='project_settings',
+    model=ProjectSkillsSettings,
 )
 
 register_config_type(
