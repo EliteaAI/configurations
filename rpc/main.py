@@ -64,6 +64,43 @@ class RPC:
     def configurations_delete(self, project_id: int, config_id: int, owner: str | None = None) -> bool:
         return delete_configuration(project_id, config_id, owner=owner) is not None
 
+    @web.rpc('configurations_count_section')
+    def configurations_count_section(self, project_id: int, section: str) -> int:
+        from ..local_tools import db
+        from ..models.configuration import Configuration
+        with db.get_session(project_id) as session:
+            return session.query(Configuration).filter(
+                Configuration.project_id == project_id, Configuration.section == section,
+            ).count()
+
+    @web.rpc('configurations_delete_section')
+    def configurations_delete_section(self, project_id: int, section: str) -> dict:
+        """ Bulk project data delete (#7242): every configuration of a section, shared ones
+            included. Each goes through delete_configuration so its checks and events apply;
+            plugin-managed ones are skipped, the REST delete refuses them too """
+        from ..local_tools import db
+        from ..models.configuration import Configuration
+        from ..models.pd.registry import owned_entry
+        with db.get_session(project_id) as session:
+            rows = session.query(Configuration.id, Configuration.type, Configuration.elitea_title).filter(
+                Configuration.project_id == project_id, Configuration.section == section,
+            ).all()
+        deleted, failed, skipped = 0, 0, 0
+        for config_id, config_type, title in rows:
+            if owned_entry(config_type, title):
+                skipped += 1
+                continue
+            try:
+                if delete_configuration(project_id, config_id) is not None:
+                    deleted += 1
+            except Exception:  # pylint: disable=W0703
+                failed += 1
+                log.exception(
+                    "configurations_delete_section: failed to delete configuration %s of project %s",
+                    config_id, project_id,
+                )
+        return {'deleted': deleted, 'failed': failed, 'skipped': skipped}
+
     @web.rpc('configurations_expand')
     def configurations_expand(
         self, project_id: int, settings: dict,
