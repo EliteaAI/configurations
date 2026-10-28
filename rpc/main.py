@@ -18,6 +18,17 @@ from ..utils import update_configuration, create_if_not_exists, expand_configura
 INTERNAL_CREDENTIAL_TYPES = frozenset(('s3_api_credentials',))
 
 
+def kept_by_bulk_delete(config_type, title, source) -> bool:
+    """ Plugin-managed (the REST delete refuses them too) or made by Elitea itself:
+        S3 API keys (artifact bucket access) and system-sourced entries """
+    from ..models.pd.registry import owned_entry
+    from ..models.enums import SourceTypes
+    return bool(
+        owned_entry(config_type, title) or config_type in INTERNAL_CREDENTIAL_TYPES
+        or source == SourceTypes.system
+    )
+
+
 class RPC:
     @web.rpc('configurations_register')
     def configurations_register(self,
@@ -70,33 +81,23 @@ class RPC:
 
     @web.rpc('configurations_count_section')
     def configurations_count_section(self, project_id: int, section: str) -> dict:
-        """ {count, blocked}: blocked are the ones the bulk delete keeps (see delete_section) """
+        """ {count, blocked}: blocked are the ones the bulk delete keeps (kept_by_bulk_delete) """
         from ..local_tools import db
         from ..models.configuration import Configuration
-        from ..models.pd.registry import owned_entry
-        from ..models.enums import SourceTypes
         with db.get_session(project_id) as session:
             rows = session.query(Configuration.type, Configuration.elitea_title, Configuration.source).filter(
                 Configuration.project_id == project_id, Configuration.section == section,
             ).all()
-        blocked = sum(
-            1 for config_type, title, source in rows
-            if owned_entry(config_type, title) or config_type in INTERNAL_CREDENTIAL_TYPES
-            or source == SourceTypes.system
-        )
+        blocked = sum(1 for config_type, title, source in rows if kept_by_bulk_delete(config_type, title, source))
         return {'count': len(rows), 'blocked': blocked}
 
     @web.rpc('configurations_delete_section')
     def configurations_delete_section(self, project_id: int, section: str) -> dict:
         """ Bulk project data delete (#7242): every configuration of a section, shared ones
             included. Each goes through delete_configuration so its checks and events apply;
-            plugin-managed ones are skipped, the REST delete refuses them too, and so are the
-            ones Elitea makes for itself: S3 API keys (artifact bucket access) and system-sourced
-            entries (rule mirrored in admin utils/project_data_delete.py) """
+            the ones kept_by_bulk_delete keeps are skipped """
         from ..local_tools import db
         from ..models.configuration import Configuration
-        from ..models.pd.registry import owned_entry
-        from ..models.enums import SourceTypes
         with db.get_session(project_id) as session:
             rows = session.query(
                 Configuration.id, Configuration.type, Configuration.elitea_title, Configuration.source,
@@ -105,8 +106,7 @@ class RPC:
             ).all()
         deleted, failed, skipped = 0, 0, 0
         for config_id, config_type, title, source in rows:
-            if owned_entry(config_type, title) or config_type in INTERNAL_CREDENTIAL_TYPES \
-                    or source == SourceTypes.system:
+            if kept_by_bulk_delete(config_type, title, source):
                 skipped += 1
                 continue
             try:
