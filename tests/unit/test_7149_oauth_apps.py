@@ -28,8 +28,10 @@ def modules(monkeypatch):
     common.get_public_project_id = lambda: 1
     local = types.ModuleType(PACKAGE + '.local_tools')
     local.db = None
-    local.log = types.SimpleNamespace(warning=lambda *a, **k: None, debug=lambda *a, **k: None)
+    local.log = types.SimpleNamespace(warning=lambda *a, **k: None, debug=lambda *a, **k: None, info=lambda *a, **k: None)
     local.purge_secrets = lambda **kwargs: None
+    local.event_manager = types.SimpleNamespace(fired=[])
+    local.event_manager.fire_event = lambda name, payload: local.event_manager.fired.append((name, payload))
     local.VaultClient = _Vault
     config_model = types.ModuleType(PACKAGE + '.models.configuration')
     config_model.Configuration = object
@@ -44,7 +46,8 @@ def modules(monkeypatch):
         loaded[name] = mod
     # No database in unit tests: the stored app list is set per test with _set_apps
     monkeypatch.setattr(loaded['oauth_apps'], '_public_apps', lambda: [])
-    return types.SimpleNamespace(apps=loaded['oauth_apps'], error=loaded['exceptions'].ConfigurationError)
+    return types.SimpleNamespace(apps=loaded['oauth_apps'], error=loaded['exceptions'].ConfigurationError,
+                                 events=local.event_manager)
 
 
 APP = {
@@ -210,9 +213,12 @@ class _Resp:
      'could not be fully confirmed'),
 ])
 def test_admin_connection_check(modules, monkeypatch, body, success, warning, text):
-    import requests
+    # A stub, so the test needs no HTTP library (CI installs only tests/requirements-dev.txt)
     calls = []
-    monkeypatch.setattr(requests, 'post', lambda url, **kw: calls.append((url, kw['data'])) or _Resp(body))
+    requests = types.ModuleType('requests')
+    requests.RequestException = Exception
+    requests.post = lambda url, **kw: calls.append((url, kw['data'])) or _Resp(body)
+    monkeypatch.setitem(sys.modules, 'requests', requests)
     result = modules.apps.check_app_connection({**APP, 'client_secret': '{{secret.app}}'})
     assert result['success'] is success and result.get('warning') is warning and text in result['message']
     url, form = calls[0]
@@ -374,3 +380,146 @@ def test_proxy_client_requires_a_type_the_app_serves(modules, monkeypatch, crede
     monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: modules.apps._public_apps()[0])
     with pytest.raises(modules.apps.OAuthAppUnavailable):
         modules.apps.resolve_app_client('uuid-Public default', 5, credential_type)
+
+
+# --- R8, option B: a resolved Default app wins and is stored ------------------------------------
+
+OWN = {'client_id': 'own', 'client_secret': '{{secret.own}}',
+       'oauth_discovery_endpoint': 'https://login.microsoftonline.com/own', 'scopes': ['Mail.Read']}
+
+
+def _credential(data, type_='outlook', project_id=5, meta=None):
+    return types.SimpleNamespace(id=9, type=type_, project_id=project_id, data=dict(data), meta=meta or {},
+                                 generation=3)
+
+
+def test_default_app_wins_over_a_custom_credential(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    payload = {**OWN, 'refresh_token': 'own-login'}
+    modules.apps.resolve_on_use(payload, _credential(OWN), 5)
+    assert payload['oauth_app_id'] == 'uuid-Public default'
+    assert 'refresh_token' not in payload  # issued to the user's own app
+    assert modules.events.fired == [('oauth_app_default_adopted',
+                                     {'project_id': 5, 'config_id': 9, 'app_id': 'uuid-Public default'})]
+
+
+def test_default_app_wins_over_a_picked_non_default_app(modules, monkeypatch):
+    other = {**PUBLIC_DEFAULT, 'label': 'Other', 'is_default': False}
+    _set_apps(modules, monkeypatch, other, PUBLIC_DEFAULT)
+    payload = {'oauth_app_id': 'uuid-Other'}
+    modules.apps.resolve_on_use(payload, _credential(payload), 5)
+    assert payload['oauth_app_id'] == 'uuid-Public default'
+
+
+def test_without_a_default_the_credential_keeps_what_it_stores(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, {**PUBLIC_DEFAULT, 'is_default': False})
+    payload = dict(OWN)
+    modules.apps.resolve_on_use(payload, _credential(OWN), 5)
+    assert 'oauth_app_id' not in payload and modules.events.fired == []
+
+
+def test_sharepoint_app_only_is_never_replaced(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    app_only = {'client_id': 'own', 'client_secret': '{{secret.own}}', 'site_url': 'https://x.sharepoint.com'}
+    payload = dict(app_only)
+    modules.apps.resolve_on_use(payload, _credential(app_only, 'sharepoint'), 5)
+    assert 'oauth_app_id' not in payload and modules.events.fired == []
+
+
+def test_the_credential_own_project_decides(modules, monkeypatch):
+    """Team project 3 has its own (non-default) app, so the Public Default doesn't win there."""
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, TEAM_APP)
+    payload = dict(OWN)
+    modules.apps.resolve_on_use(payload, _credential(OWN, project_id=3), 3)
+    assert 'oauth_app_id' not in payload
+
+
+def test_a_login_made_with_another_client_is_not_used(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, {**PUBLIC_DEFAULT, 'is_default': False})
+    payload = {**OWN, 'refresh_token': 'login'}
+    modules.apps.resolve_on_use(payload, _credential(OWN, meta={'oauth_login_client_id': 'cid'}), 5)
+    assert 'refresh_token' not in payload
+
+
+def test_a_login_of_the_same_client_is_kept(modules, monkeypatch):
+    _set_apps(modules, monkeypatch)
+    payload = {**OWN, 'refresh_token': 'login'}
+    modules.apps.resolve_on_use(payload, _credential(OWN, meta={'oauth_login_client_id': 'own'}), 5)
+    assert payload['refresh_token'] == 'login'
+
+
+def test_saving_a_default_app_credential_keeps_the_own_fields(modules, monkeypatch):
+    _patch_app(modules, monkeypatch, {**APP, 'allowed_project_ids': [1]})
+    data = {'oauth_app_id': 'app-1', 'client_id': 'from-form'}
+    modules.apps.strip_app_client_fields('teams', data, 5, previous=OWN)
+    assert data == {'oauth_app_id': 'app-1', **OWN}
+
+
+def test_a_new_login_records_its_client(modules, monkeypatch):
+    _set_apps(modules, monkeypatch)
+    meta = modules.apps.record_login_client('outlook', {**OWN, 'refresh_token': 'new'}, OWN, {}, 5)
+    assert meta == {'oauth_login_client_id': 'own'}
+    assert modules.apps.record_login_client('outlook', dict(OWN), dict(OWN), {}, 5) is None
+
+
+def test_the_read_view_hides_own_fields_when_a_default_wins(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: modules.apps._public_apps()[0])
+    item = {'id': 9, 'project_id': 5, 'type': 'outlook', 'data': {**OWN, 'refresh_token': 'x'}}
+    modules.apps.decorate_credentials([item], 5)
+    assert item['data']['oauth_app_id'] == 'uuid-Public default'
+    assert item['data']['client_id'] == 'cid' and 'client_secret' not in item['data']
+    assert 'refresh_token' not in item['data']
+
+
+class _Stored:
+    def __init__(self, data, meta=None):
+        self.row = types.SimpleNamespace(id=9, type='outlook', data=dict(data), meta=meta or {}, generation=3)
+        self.updates = []
+
+
+def _persist(modules, monkeypatch, stored, conflict=False):
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def query(self, _):
+            return types.SimpleNamespace(filter_by=lambda **kw: types.SimpleNamespace(first=lambda: stored.row))
+
+    monkeypatch.setattr(modules.apps, 'db', types.SimpleNamespace(get_session=lambda pid: _Session()))
+    utils = types.ModuleType(PACKAGE + '.utils')
+
+    def update_configuration(project_id, config_id, payload, expected_generation=None):
+        if conflict:
+            raise modules.error('generation', 'Configuration was modified concurrently')
+        stored.updates.append((payload, expected_generation))
+    utils.update_configuration = update_configuration
+    monkeypatch.setitem(sys.modules, utils.__name__, utils)
+    return modules.apps.persist_adopted_app(5, 9, 'uuid-Public default')
+
+
+def test_persist_stores_the_default_app_and_drops_the_old_login(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    stored = _Stored({**OWN, 'refresh_token': 'x'}, {'oauth_login_client_id': 'own'})
+    assert _persist(modules, monkeypatch, stored) is True
+    (payload, generation), = stored.updates
+    assert generation == 3
+    assert payload['data'] == {**OWN, 'oauth_app_id': 'uuid-Public default'}  # own fields kept
+    assert payload['meta'] == {}
+
+
+def test_persist_is_idempotent_and_rechecks_the_rule(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    stored = _Stored({**OWN, 'oauth_app_id': 'uuid-Public default'})
+    assert _persist(modules, monkeypatch, stored) is False and stored.updates == []
+    _set_apps(modules, monkeypatch, {**PUBLIC_DEFAULT, 'is_default': False})  # admin un-defaulted meanwhile
+    stored = _Stored(OWN)
+    assert _persist(modules, monkeypatch, stored) is False and stored.updates == []
+
+
+def test_persist_gives_up_on_a_concurrent_edit(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    assert _persist(modules, monkeypatch, _Stored(OWN), conflict=True) is False

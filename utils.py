@@ -16,7 +16,7 @@ from .models.pd.registry import CONFIG_TYPE_REGISTRY, owned_entry
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
 from .llm_model_profiles import check_llm_model_profile_bounds
-from .oauth_apps import apply_oauth_app, strip_app_client_fields, decorate_credentials
+from .oauth_apps import OAUTH_APP_TOOLKIT_TYPES, apply_oauth_app, record_login_client, resolve_on_use, strip_app_client_fields, decorate_credentials
 from .models.pd.registry import ADMIN_MANAGED_TYPES
 
 
@@ -265,7 +265,12 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
         if 'data' in update_payload:
             # Get the configuration type registry entry
             entry = CONFIG_TYPE_REGISTRY.get(config.type)
-            strip_app_client_fields(config.type, update_payload['data'], project_id)
+            strip_app_client_fields(config.type, update_payload['data'], project_id, previous=config.data)
+            if config.type in OAUTH_APP_TOOLKIT_TYPES:
+                meta = record_login_client(config.type, update_payload['data'], config.data,
+                                           update_payload.get('meta', config.meta), project_id)
+                if meta is not None:
+                    update_payload['meta'] = meta
             if entry:
                 # data is replaced wholesale, so validate it exactly as create does (raw, before secret handling)
                 if config.type != 'service_prompt' and entry.model and hasattr(entry.model, 'model_validate'):
@@ -388,7 +393,9 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
     else:
         payload.update(config.data)
 
-    # Default-mode Teams/Outlook/SharePoint credentials take their client from the admin app
+    # Teams/Outlook/SharePoint: a winning Default app replaces the stored one (R8), then the
+    # credential takes its client from that app; the credential's own project decides (R6)
+    resolve_on_use(payload, config, config.project_id)
     apply_oauth_app(payload, config.type, current_project_id, unsecret)
 
     payload['configuration_uuid'] = str(config.uuid)
@@ -537,6 +544,7 @@ def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected
                 continue
             data = VaultClient(config.project_id).unsecret(dict(config.data or {}))
             try:
+                resolve_on_use(data, config, config.project_id)
                 apply_oauth_app(data, config.type, project_id, unsecret=True)
             except LookupError as e:
                 log.warning(f"get_stored_login: {e}")

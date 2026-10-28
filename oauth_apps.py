@@ -16,7 +16,7 @@ from pydantic import ValidationError
 
 from .common_utils import get_public_project_id
 from .exceptions import ConfigurationError, handle_validation_error
-from .local_tools import db, log, purge_secrets, VaultClient
+from .local_tools import db, event_manager, log, purge_secrets, VaultClient
 from .models.configuration import Configuration
 from .models.pd.oauth_app import (
     CREDENTIAL_PROVIDERS, MICROSOFT_ENTRA, OAUTH_APP_TOOLKIT_TYPES, OAUTH_APP_TYPE, OAUTH_PROVIDERS, OAuthApp,
@@ -27,6 +27,9 @@ APP_REFERENCE_FIELD = 'oauth_app_id'
 # Fields an app supplies; a Default-mode credential never stores its own copy
 APP_CLIENT_FIELDS = ('client_id', 'client_secret', 'oauth_discovery_endpoint', 'scopes', 'auto_refresh_token')
 SEED_TITLE = 'oauth_app_elitea_default'
+# A stored login (refresh token) belongs to the OAuth client it was issued to (spec R7)
+LOGIN_CLIENT_META = 'oauth_login_client_id'
+ADOPTED_EVENT = 'oauth_app_default_adopted'
 
 
 class OAuthAppUnavailable(LookupError):
@@ -177,6 +180,123 @@ def resolve_app_client(app_id, project_id: int | None, credential_type: str | No
     }
 
 
+def _is_app_only(config_type: str | None, data: dict | None) -> bool:
+    """SharePoint App-only (client credentials, no user): never replaced by an admin app."""
+    data = data or {}
+    return (config_type == 'sharepoint' and not app_reference(data)
+            and bool(data.get('client_id')) and not data.get('oauth_discovery_endpoint'))
+
+
+def default_app_for(config_type: str | None, project_id: int | None) -> dict | None:
+    """The Default app that applies to credentials of this type in this project, if one resolves."""
+    if config_type not in OAUTH_APP_TOOLKIT_TYPES or project_id is None:
+        return None
+    for app in _usable_apps(project_id, config_type):
+        if app.get('is_default'):
+            return app
+    return None
+
+
+def effective_app_reference(config_type: str | None, data: dict | None, project_id: int | None) -> str | None:
+    """The app a credential uses now: a resolved Default app wins over what it stores (spec R8),
+    except for SharePoint App-only; otherwise its stored app, or None for its own (Custom) app."""
+    if config_type not in OAUTH_APP_TOOLKIT_TYPES or _is_app_only(config_type, data):
+        return app_reference(data)
+    default = default_app_for(config_type, project_id)
+    if default:
+        return str(default['_config'].uuid)
+    return app_reference(data)
+
+
+def adopt_default_app(payload: dict, config_type: str | None, project_id: int | None) -> str | None:
+    """Point ``payload`` at the Default app when one wins; returns its id when the stored one differs.
+
+    The credential's own client fields are left in place (removed from the payload by
+    ``apply_oauth_app``), so they stay in the database; spec section 12.
+    """
+    if config_type not in OAUTH_APP_TOOLKIT_TYPES:
+        return None
+    effective = effective_app_reference(config_type, payload, project_id)
+    if not effective or effective == app_reference(payload):
+        return None
+    payload[APP_REFERENCE_FIELD] = effective
+    return effective
+
+
+def effective_client_id(config_type: str | None, data: dict | None, project_id: int | None) -> str | None:
+    """Client ID the credential signs in with now: its app's, or its own."""
+    app_id = effective_app_reference(config_type, data, project_id)
+    if not app_id:
+        return (data or {}).get('client_id')
+    config = _load_app(app_id)
+    return (config.data or {}).get('client_id') if config else None
+
+
+def resolve_on_use(payload: dict, config, project_id: int | None) -> None:
+    """Every read of a credential (agent run, sign-in, form): adopt a winning Default app.
+
+    Read-only for the caller: a changed app is persisted by the ``oauth_app_default_adopted``
+    handler, outside this request, and a login made with another client is not used.
+    """
+    if config.type not in OAUTH_APP_TOOLKIT_TYPES:
+        return
+    login_client = (getattr(config, 'meta', None) or {}).get(LOGIN_CLIENT_META)
+    adopted = adopt_default_app(payload, config.type, config.project_id)
+    if adopted:
+        payload.pop('refresh_token', None)  # issued to the client the credential used before
+        event_manager.fire_event(ADOPTED_EVENT, {
+            'project_id': config.project_id, 'config_id': config.id, 'app_id': adopted,
+        })
+    elif payload.get('refresh_token') and login_client:
+        if login_client != effective_client_id(config.type, payload, config.project_id):
+            payload.pop('refresh_token', None)
+
+
+def record_login_client(config_type: str | None, data: dict | None, previous: dict | None,
+                        meta: dict | None, project_id: int | None) -> dict | None:
+    """When a save brings a new stored login, remember the client it belongs to (R7); else None."""
+    if config_type not in OAUTH_APP_TOOLKIT_TYPES or not isinstance(data, dict):
+        return None
+    login, before = data.get('refresh_token'), (previous or {}).get('refresh_token')
+    if login == before:
+        return None
+    meta = dict(meta or {})
+    if login:
+        meta[LOGIN_CLIENT_META] = effective_client_id(config_type, data, project_id)
+    else:
+        meta.pop(LOGIN_CLIENT_META, None)
+    return meta
+
+
+def persist_adopted_app(project_id: int, config_id: int, app_id: str) -> bool:
+    """Store the winning Default app on the credential (spec R8, option B); idempotent.
+
+    Re-checks the rule against the stored row, writes with an optimistic generation check, and
+    drops the stored login, which belongs to the previous client.
+    """
+    from .utils import update_configuration  # pylint: disable=C0415
+    with db.get_session(project_id) as session:
+        config = session.query(Configuration).filter_by(id=config_id).first()
+        if config is None:
+            return False
+        data = dict(config.data or {})
+        generation = config.generation
+        config_type, meta = config.type, dict(config.meta or {})
+    if app_reference(data) == app_id or effective_app_reference(config_type, data, project_id) != app_id:
+        return False
+    data[APP_REFERENCE_FIELD] = app_id
+    data.pop('refresh_token', None)
+    meta.pop(LOGIN_CLIENT_META, None)
+    try:
+        update_configuration(project_id, config_id, {'data': data, 'meta': meta}, expected_generation=generation)
+    except ConfigurationError as e:
+        if e.field == 'generation':
+            return False  # changed meanwhile; the next use adopts again
+        raise
+    log.info(f'Credential {config_id} in project {project_id} now uses the default OAuth app {app_id}')
+    return True
+
+
 def apply_oauth_app(payload: dict, config_type: str | None, project_id: int | None, unsecret: bool) -> None:
     """Fill a Default-mode credential's client from its app, in place. Custom credentials are untouched."""
     if not uses_oauth_app(config_type, payload):
@@ -186,14 +306,22 @@ def apply_oauth_app(payload: dict, config_type: str | None, project_id: int | No
     payload.update(resolve_oauth_app(app_reference(payload), project_id, config_type, unsecret))
 
 
-def strip_app_client_fields(config_type: str | None, data: dict | None, project_id: int | None = None) -> None:
-    """Default mode stores the reference only, so a later admin change reaches the credential."""
+def strip_app_client_fields(config_type: str | None, data: dict | None, project_id: int | None = None,
+                            previous: dict | None = None) -> None:
+    """Default mode stores the reference only, so a later admin change reaches the credential.
+
+    The credential's own client fields from ``previous`` (stored before) are kept: they are not
+    used while it points at an app, and Custom app brings them back.
+    """
     if isinstance(data, dict):
         data.pop('app_error', None)  # added on read only
     if not uses_oauth_app(config_type, data):
         return
     for field in APP_CLIENT_FIELDS:
         data.pop(field, None)
+    for field in APP_CLIENT_FIELDS:
+        if (previous or {}).get(field) is not None:
+            data[field] = previous[field]
     config = _load_app(app_reference(data))
     reason = unavailable_reason(_app_view(config) if config else None, project_id, config_type)
     if reason:
@@ -209,6 +337,18 @@ def decorate_credentials(items: list[dict], project_id: int | None) -> None:
     cache = {}
     for item in items:
         data = item.get('data')
+        if not isinstance(data, dict):
+            continue
+        # A winning Default app replaces what the credential stores (R8); its own client fields
+        # stay in the database but are not shown
+        adopted = adopt_default_app(data, item.get('type'), item.get('project_id'))
+        if adopted:
+            for field in (*APP_CLIENT_FIELDS, 'refresh_token'):
+                data.pop(field, None)
+            if item.get('id') is not None:
+                event_manager.fire_event(ADOPTED_EVENT, {
+                    'project_id': item['project_id'], 'config_id': item['id'], 'app_id': adopted,
+                })
         if not uses_oauth_app(item.get('type'), data):
             continue
         app_id = app_reference(data)
