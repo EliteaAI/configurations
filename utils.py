@@ -16,7 +16,7 @@ from .models.pd.registry import CONFIG_TYPE_REGISTRY, owned_entry
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
 from .llm_model_profiles import check_llm_model_profile_bounds
-from .oauth_apps import OAUTH_APP_TOOLKIT_TYPES, apply_oauth_app, record_login_client, resolve_on_use, strip_app_client_fields, decorate_credentials
+from .oauth_apps import OAUTH_APP_TOOLKIT_TYPES, apply_oauth_app, record_login_client, reject_shared, resolve_on_use, strip_app_client_fields, decorate_credentials
 from .models.pd.registry import ADMIN_MANAGED_TYPES
 
 
@@ -118,6 +118,7 @@ def create_configuration(payload: dict, owner: str | None = None) -> Configurati
     from .routing_access import validate_routing_write
     assert_write_allowed(payload.get('type'), payload.get('elitea_title'), owner)
     payload = validate_routing_write(payload.get('type'), payload.get('project_id'), payload)
+    reject_shared(payload.get('type'), payload.get('shared'))
     if isinstance(payload.get('data'), dict):
         payload = {**payload, 'data': dict(payload['data'])}
         strip_app_client_fields(payload.get('type'), payload['data'], payload.get('project_id'))
@@ -257,6 +258,8 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
         update_payload = validate_routing_write(config.type, project_id, update_payload, existing={
             'data': config.data, 'elitea_title': config.elitea_title,
         })
+
+        reject_shared(config.type, update_payload.get('shared'))
 
         old_elitea_title = config.elitea_title
         previous_data = dict(config.data or {})

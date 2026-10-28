@@ -45,6 +45,9 @@ def modules(monkeypatch):
         spec.loader.exec_module(mod)
         loaded[name] = mod
     # No database in unit tests: the stored app list is set per test with _set_apps
+    loaded['oauth_apps']._public_apps_uncached = loaded['oauth_apps']._public_apps
+    loaded['oauth_apps'].invalidate_apps_cache()
+    loaded['oauth_apps']._announced.clear()
     monkeypatch.setattr(loaded['oauth_apps'], '_public_apps', lambda: [])
     return types.SimpleNamespace(apps=loaded['oauth_apps'], error=loaded['exceptions'].ConfigurationError,
                                  events=local.event_manager)
@@ -72,7 +75,7 @@ def test_unavailable_reason(modules, app, project, expected):
 
 def _patch_app(modules, monkeypatch, data=APP):
     config = types.SimpleNamespace(data=dict(data), label=data['label'], project_id=1)
-    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: config if app_id == 'app-1' else None)
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: config if app_id == 'app-1' else None)
 
 
 def test_default_mode_credential_takes_everything_from_app(modules, monkeypatch):
@@ -296,7 +299,7 @@ def test_credential_types_keep_the_provider_order(modules):
     ([1], 1, None),
     ([7], 5, 'not available'),      # a team project only
     ([7], 7, None),
-    ([], 5, 'no projects assigned'),  # Projects is required: an app without projects applies nowhere
+    ([], 5, 'not available in this project'),  # Projects is required: an app without projects applies nowhere
 ])
 def test_public_project_means_every_project(modules, allowed, project, expected):
     reason = modules.apps.unavailable_reason({**APP, 'allowed_project_ids': allowed}, project, 'teams')
@@ -377,7 +380,7 @@ def test_without_a_default_every_non_default_app_is_listed(modules, monkeypatch)
 @pytest.mark.parametrize('credential_type', ['teams', None, 'jira'])
 def test_proxy_client_requires_a_type_the_app_serves(modules, monkeypatch, credential_type):
     _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
-    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: modules.apps._public_apps()[0])
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
     with pytest.raises(modules.apps.OAuthAppUnavailable):
         modules.apps.resolve_app_client('uuid-Public default', 5, credential_type)
 
@@ -464,7 +467,7 @@ def test_a_new_login_records_its_client(modules, monkeypatch):
 
 def test_the_read_view_hides_own_fields_when_a_default_wins(modules, monkeypatch):
     _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
-    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id: modules.apps._public_apps()[0])
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
     item = {'id': 9, 'project_id': 5, 'type': 'outlook', 'data': {**OWN, 'refresh_token': 'x'}}
     modules.apps.decorate_credentials([item], 5)
     assert item['data']['oauth_app_id'] == 'uuid-Public default'
@@ -523,3 +526,75 @@ def test_persist_is_idempotent_and_rechecks_the_rule(modules, monkeypatch):
 def test_persist_gives_up_on_a_concurrent_edit(modules, monkeypatch):
     _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
     assert _persist(modules, monkeypatch, _Stored(OWN), conflict=True) is False
+
+
+# --- PR review: scopes on sign-in, shared, cached app list -------------------------------------
+
+def test_sign_in_uses_the_admin_scopes(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, {**APP, 'label': 'Teams app', 'credential_types': ['teams']})
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
+    client = modules.apps.resolve_app_client('uuid-Teams app', 5, 'teams')
+    assert client['scopes'] == ['Chat.Read']
+    assert client['client_secret'] == 'plain-secret'
+
+
+def test_sign_in_falls_back_to_the_type_recommended_scopes(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, {**APP, 'label': 'Teams app', 'scopes': {}})
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
+    monkeypatch.setattr(modules.apps, 'recommended_scopes', lambda type_: ['User.ReadBasic.All'])
+    assert modules.apps.resolve_app_client('uuid-Teams app', 5, 'teams')['scopes'] == ['User.ReadBasic.All']
+
+
+@pytest.mark.parametrize('config_type,shared,rejected', [
+    ('teams', True, True), ('outlook', True, True), ('sharepoint', True, True),
+    ('teams', False, False), ('jira', True, False),
+])
+def test_teams_outlook_sharepoint_credentials_cannot_be_shared(modules, config_type, shared, rejected):
+    if rejected:
+        with pytest.raises(modules.error, match='cannot be shared'):
+            modules.apps.reject_shared(config_type, shared)
+    else:
+        modules.apps.reject_shared(config_type, shared)
+
+
+def test_the_app_list_is_read_once_and_cleared_by_admin_writes(modules, monkeypatch):
+    queries = []
+
+    class _Session:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def query(self, _):
+            queries.append(1)
+            chain = types.SimpleNamespace(all=lambda: [])
+            chain.order_by = lambda *_: chain
+            return types.SimpleNamespace(filter_by=lambda **kw: chain)
+
+    loaded = sys.modules[PACKAGE + '.oauth_apps']
+    monkeypatch.setattr(loaded, 'db', types.SimpleNamespace(get_session=lambda pid: _Session()))
+    monkeypatch.setattr(loaded, 'Configuration', types.SimpleNamespace(created_at=None))
+    monkeypatch.setattr(loaded, '_public_apps', loaded._public_apps_uncached)
+    loaded.invalidate_apps_cache()
+    for _ in range(3):
+        loaded._public_apps()
+    assert len(queries) == 1
+    loaded.invalidate_apps_cache()
+    loaded._public_apps()
+    assert len(queries) == 2
+
+
+def test_the_switch_is_announced_once_per_credential(modules, monkeypatch):
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT)
+    for _ in range(3):
+        modules.apps.resolve_on_use(dict(OWN), _credential(OWN), 5)
+    assert len(modules.events.fired) == 1
+
+
+def test_outside_its_projects_the_app_is_never_named(modules):
+    for app, project in [({**APP, 'allowed_project_ids': [7]}, 5), ({**APP, 'allowed_project_ids': []}, 5), (APP, None)]:
+        reason = modules.apps.unavailable_reason(app, project, 'teams')
+        assert 'not available in this project' in reason and 'Contoso' not in reason
+    assert 'Contoso' in modules.apps.unavailable_reason({**APP, 'enabled': False}, 5, 'teams')  # in scope: named

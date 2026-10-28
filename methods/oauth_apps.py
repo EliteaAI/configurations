@@ -3,6 +3,7 @@ from pylon.core.tools import web
 
 from ..common_utils import get_public_project_id
 from ..oauth_apps import (
+    invalidate_apps_cache,
     SEED_TITLE, _load_app, admin_view, check_app_connection, list_admin_apps, purge_replaced_secret,
     validated_app_data,
 )
@@ -53,8 +54,17 @@ def _clear_other_defaults(project_id: int, keep_id: int, data: dict) -> None:
     provider = data.get('provider') or MICROSOFT_ENTRA
     for app in list_admin_apps():
         if app['config_id'] != keep_id and app.get('is_default') and (app.get('provider') or MICROSOFT_ENTRA) == provider:
-            config = _load_app(app['id'])
+            config = _load_app(app['id'], fresh=True)
             update_configuration(project_id, config.id, {'data': {**config.data, 'is_default': False}})
+    invalidate_apps_cache()
+
+
+def _endpoint_changed(values: dict, existing: dict | None) -> bool:
+    if 'oauth_discovery_endpoint' not in values:
+        return False
+    def norm(value):
+        return (value or '').strip().rstrip('/').lower()
+    return norm(values.get('oauth_discovery_endpoint')) != norm((existing or {}).get('oauth_discovery_endpoint'))
 
 
 class Method:
@@ -75,16 +85,19 @@ class Method:
             'elitea_title': f'oauth_app_{uuid_lib.uuid4().hex[:12]}', 'label': _name(values), 'data': data,
         })
         _clear_other_defaults(project_id, record['id'], data)
+        invalidate_apps_cache()
         return admin_view(record)
 
     @web.method()
     def oauth_apps_admin_update(self, app_id: str, values: dict):
         _require_admin()
         project_id = get_public_project_id()
-        config = _load_app(app_id)
+        config = _load_app(app_id, fresh=True)
         if config is None:
             raise LookupError('OAuth app not found')
         old_secret = (config.data or {}).get('client_secret')
+        if not values.get('client_secret') and _endpoint_changed(values, config.data):
+            raise ConfigurationError('client_secret', 'Enter the client secret again when you change the endpoint')
         data = validated_app_data(values, existing=config.data)
         _require_existing_projects(data)
         record = update_configuration(project_id, config.id, {
@@ -92,13 +105,14 @@ class Method:
         })
         purge_replaced_secret(old_secret, (record.get('data') or {}).get('client_secret'))
         _clear_other_defaults(project_id, config.id, data)
+        invalidate_apps_cache()
         return admin_view(record)
 
     @web.method()
     def oauth_apps_admin_delete(self, app_id: str):
         _require_admin()
         project_id = get_public_project_id()
-        config = _load_app(app_id)
+        config = _load_app(app_id, fresh=True)
         if config is None:
             raise LookupError('OAuth app not found')
         if config.elitea_title == SEED_TITLE:
@@ -108,6 +122,7 @@ class Method:
         delete_configuration(project_id, config.id)
         if secret:
             purge_secrets(project_id=project_id, secrets_to_delete=[secret])
+        invalidate_apps_cache()
         return True
 
     @web.method()
@@ -116,9 +131,12 @@ class Method:
         _require_admin()
         existing = None
         if app_id:
-            config = _load_app(app_id)
+            config = _load_app(app_id, fresh=True)
             if config is None:
                 raise LookupError('OAuth app not found')
             existing = config.data
+            if not values.get('client_secret') and _endpoint_changed(values, existing):
+                # The stored secret only ever goes to the authority it was saved with
+                raise ConfigurationError('client_secret', 'Enter the client secret again to test a changed endpoint')
         data = validated_app_data(values, existing=existing)
         return check_app_connection(data)

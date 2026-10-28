@@ -10,6 +10,7 @@ admin change reaches every credential without a migration.
 The secret lives in the public project's hidden vault. No API returns it or its vault
 reference: reads expose ``client_secret_set`` only.
 """
+import time
 import uuid as uuid_lib
 
 from pydantic import ValidationError
@@ -60,13 +61,15 @@ def unavailable_reason(app: dict | None, project_id: int | None, config_type: st
     if app.get('enabled') is False:
         return f"{name} was disabled by your administrator"
     # The project is always required: an unknown project never gets an app
+    # Outside the app's projects the user may not know the app: never name it there
+    not_here = f"The {provider.label} app selected for this credential is not available in this project"
     if not (app.get('allowed_project_ids') or []):
-        return f"{name} has no projects assigned by your administrator"
+        return not_here
     if project_id is None or not covers_project(app, project_id):
-        return f"{name} is not available in this project"
+        return not_here
     if is_public_app(app) and _project_has_own_apps(project_id, config_type, provider):
         # The project's own apps replace the Public tier in this project
-        return f"{name} is not available in this project"
+        return not_here
     return None
 
 
@@ -124,10 +127,13 @@ def _parse_uuid(value):
         return None
 
 
-def _load_app(app_id) -> Configuration | None:
+def _load_app(app_id, fresh: bool = False) -> Configuration | None:
+    """One app by uuid. ``fresh`` reads the database (admin writes); otherwise the cached app list."""
     uuid_value = _parse_uuid(app_id)
     if uuid_value is None:
         return None
+    if not fresh:
+        return next((config for config in _public_apps() if str(config.uuid) == str(uuid_value)), None)
     public_project_id = get_public_project_id()
     with db.get_session(public_project_id) as session:
         return session.query(Configuration).filter_by(
@@ -139,13 +145,14 @@ def _app_view(config: Configuration) -> dict:
     return {**(config.data or {}), 'label': config.label}
 
 
-def resolve_oauth_app(app_id, project_id: int | None, toolkit_type: str | None, unsecret: bool) -> dict:
+def resolve_oauth_app(app_id, project_id: int | None, toolkit_type: str | None, unsecret: bool,
+                      config: Configuration | None = None) -> dict:
     """Client settings of a usable app; raises OAuthAppUnavailable with a user-facing message.
 
     Scopes are the app's list for ``toolkit_type``; when none is set they are omitted, so the
     credential model falls back to the type's recommended scopes.
     """
-    config = _load_app(app_id)
+    config = config if config is not None else _load_app(app_id)
     app = _app_view(config) if config else None
     reason = unavailable_reason(app, project_id, toolkit_type)
     if reason:
@@ -171,13 +178,24 @@ def resolve_app_client(app_id, project_id: int | None, credential_type: str | No
     """
     if credential_type not in CREDENTIAL_PROVIDERS:
         raise OAuthAppUnavailable(f"Unsupported credential type: {credential_type}")
-    resolved = resolve_oauth_app(app_id, project_id, toolkit_type=credential_type, unsecret=True)
     config = _load_app(app_id)
+    resolved = resolve_oauth_app(app_id, project_id, toolkit_type=credential_type, unsecret=True, config=config)
     return {
         'client_id': resolved['client_id'],
         'client_secret': resolved['client_secret'],
         'token_endpoint': token_endpoint(config.data or {}),
+        # The admin's scopes, never the caller's: the platform's client is used only for these
+        'scopes': resolved.get('scopes') or recommended_scopes(credential_type),
     }
+
+
+def recommended_scopes(credential_type: str | None) -> list[str]:
+    """The credential type's default scopes, used when the app sets none for it."""
+    from .models.pd.registry import CONFIG_TYPE_REGISTRY  # pylint: disable=C0415
+    entry = CONFIG_TYPE_REGISTRY.get(credential_type)
+    schema = (getattr(entry, 'config_schema', None) or {}).get('properties', {}).get('scopes', {})
+    default = schema.get('default')
+    return list(default) if isinstance(default, list) else []
 
 
 def _is_app_only(config_type: str | None, data: dict | None) -> bool:
@@ -244,9 +262,7 @@ def resolve_on_use(payload: dict, config, project_id: int | None) -> None:
     adopted = adopt_default_app(payload, config.type, config.project_id)
     if adopted:
         payload.pop('refresh_token', None)  # issued to the client the credential used before
-        event_manager.fire_event(ADOPTED_EVENT, {
-            'project_id': config.project_id, 'config_id': config.id, 'app_id': adopted,
-        })
+        _announce_adoption(config.project_id, config.id, adopted)
     elif payload.get('refresh_token') and login_client:
         if login_client != effective_client_id(config.type, payload, config.project_id):
             payload.pop('refresh_token', None)
@@ -268,6 +284,22 @@ def record_login_client(config_type: str | None, data: dict | None, previous: di
     return meta
 
 
+# (project_id, config_id, app_id) already announced by this process: reads keep using the Default
+# app in memory, and the event fires once rather than on every read until it is stored
+_announced = set()
+ANNOUNCED_LIMIT = 10000
+
+
+def _announce_adoption(project_id: int, config_id, app_id: str) -> None:
+    key = (project_id, config_id, app_id)
+    if config_id is None or key in _announced:
+        return
+    if len(_announced) >= ANNOUNCED_LIMIT:
+        _announced.clear()
+    _announced.add(key)
+    event_manager.fire_event(ADOPTED_EVENT, {'project_id': project_id, 'config_id': config_id, 'app_id': app_id})
+
+
 def persist_adopted_app(project_id: int, config_id: int, app_id: str) -> bool:
     """Store the winning Default app on the credential (spec R8, option B); idempotent.
 
@@ -282,6 +314,7 @@ def persist_adopted_app(project_id: int, config_id: int, app_id: str) -> bool:
         data = dict(config.data or {})
         generation = config.generation
         config_type, meta = config.type, dict(config.meta or {})
+    invalidate_apps_cache()  # re-check against the stored apps, not a cached copy
     if app_reference(data) == app_id or effective_app_reference(config_type, data, project_id) != app_id:
         return False
     data[APP_REFERENCE_FIELD] = app_id
@@ -304,6 +337,12 @@ def apply_oauth_app(payload: dict, config_type: str | None, project_id: int | No
     for field in APP_CLIENT_FIELDS:
         payload.pop(field, None)
     payload.update(resolve_oauth_app(app_reference(payload), project_id, config_type, unsecret))
+
+
+def reject_shared(config_type: str | None, shared) -> None:
+    """Teams/Outlook/SharePoint credentials are never shared: each project gets its admin apps instead."""
+    if config_type in OAUTH_APP_TOOLKIT_TYPES and shared:
+        raise ConfigurationError('shared', f'{config_type.capitalize()} credentials cannot be shared')
 
 
 def strip_app_client_fields(config_type: str | None, data: dict | None, project_id: int | None = None,
@@ -345,10 +384,7 @@ def decorate_credentials(items: list[dict], project_id: int | None) -> None:
         if adopted:
             for field in (*APP_CLIENT_FIELDS, 'refresh_token'):
                 data.pop(field, None)
-            if item.get('id') is not None:
-                event_manager.fire_event(ADOPTED_EVENT, {
-                    'project_id': item['project_id'], 'config_id': item['id'], 'app_id': adopted,
-                })
+            _announce_adoption(item.get('project_id'), item.get('id'), adopted)
         if not uses_oauth_app(item.get('type'), data):
             continue
         app_id = app_reference(data)
@@ -369,12 +405,28 @@ def decorate_credentials(items: list[dict], project_id: int | None) -> None:
             data['app_error'] = reason
 
 
+# Every credential read resolves apps (R2, R8), so the few app rows are read once per process and
+# reused briefly. Admin writes clear it at once in this process; other processes see a change
+# within APPS_CACHE_SECONDS.
+APPS_CACHE_SECONDS = 5
+_apps_cache = {'at': 0.0, 'rows': None}
+
+
+def invalidate_apps_cache() -> None:
+    _apps_cache.update(at=0.0, rows=None)
+
+
 def _public_apps() -> list[Configuration]:
+    now = time.monotonic()
+    if _apps_cache['rows'] is not None and now - _apps_cache['at'] < APPS_CACHE_SECONDS:
+        return _apps_cache['rows']
     public_project_id = get_public_project_id()
     with db.get_session(public_project_id) as session:
-        return session.query(Configuration).filter_by(
+        rows = session.query(Configuration).filter_by(
             type=OAUTH_APP_TYPE, project_id=public_project_id,
         ).order_by(Configuration.created_at).all()
+    _apps_cache.update(at=now, rows=rows)
+    return rows
 
 
 def _usable_apps(project_id: int, toolkit_type: str | None) -> list[dict]:
@@ -494,6 +546,7 @@ def admin_view(config: Configuration | dict) -> dict:
 
 
 def list_admin_apps() -> list[dict]:
+    invalidate_apps_cache()  # the Admin Portal always shows the stored state
     return [admin_view(config) for config in _public_apps()]
 
 

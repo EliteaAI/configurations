@@ -4,6 +4,7 @@ from .common_utils import get_public_project_id, get_personal_project_id
 from .local_tools import db
 from .models.configuration import Configuration
 from .models.pd.configuration import ConfigurationDetails
+from .models.pd.registry import ADMIN_MANAGED_TYPES
 
 
 def get_project_configurations(project_id: int, filter_fields: Optional[dict] = None) -> list[dict]:
@@ -22,7 +23,8 @@ def get_project_configurations(project_id: int, filter_fields: Optional[dict] = 
         filter_fields = {}
     with db.get_session(project_id) as session:
         configs = session.query(Configuration).filter(
-            Configuration.project_id == project_id
+            Configuration.project_id == project_id,
+            Configuration.type.notin_(ADMIN_MANAGED_TYPES),  # OAuth apps: Admin Portal only (#7149)
         ).filter_by(**filter_fields).all()
         return [
             ConfigurationDetails.model_validate(i).model_dump(mode='json')
@@ -87,6 +89,7 @@ def get_project_configuration(project_id: int, filter_fields: Optional[dict] = N
     """
     with db.get_session(project_id) as session:
         config: Configuration | None = session.query(Configuration).filter(
-            Configuration.project_id == project_id
+            Configuration.project_id == project_id,
+            Configuration.type.notin_(ADMIN_MANAGED_TYPES),  # OAuth apps: Admin Portal only (#7149)
         ).filter_by(**filter_fields).first()
         return ConfigurationDetails.model_validate(config).model_dump(mode='json') if config else None
