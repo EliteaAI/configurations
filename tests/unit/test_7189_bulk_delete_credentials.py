@@ -64,7 +64,7 @@ class FakeSession:
         return False
 
 
-def _compile(rows, delete_configuration=None):
+def _compile(rows, delete_configuration=None, clock=None):
     tree = ast.parse(RPC_PATH.read_text())
     nodes = []
     for node in ast.walk(tree):
@@ -82,6 +82,7 @@ def _compile(rows, delete_configuration=None):
         'Configuration': MagicMock(),
         'delete_configuration': delete_configuration or (lambda project_id, config_id: {'id': config_id}),
         'log': MagicMock(),
+        'time': SimpleNamespace(monotonic=clock or (lambda: 0.0)),
     }
     exec(compile(ast.Module(body=nodes, type_ignores=[]), str(RPC_PATH), 'exec'), namespace)  # noqa: S102
     return namespace
@@ -109,7 +110,7 @@ def test_delete_skips_the_kept_credentials_and_deletes_the_rest():
 
     result = namespace['configurations_delete_section'](None, 7, 'credentials')
 
-    assert result == {'deleted': 2, 'failed': 0, 'skipped': 3}
+    assert result == {'deleted': 2, 'failed': 0, 'skipped': 3, 'remaining': 0}
     assert deleted_ids == [1, 2]
 
 
@@ -127,4 +128,19 @@ def test_a_failing_delete_is_counted_and_does_not_stop_the_rest():
 
     result = _compile(ROWS, delete_configuration)['configurations_delete_section'](None, 7, 'credentials')
 
-    assert result == {'deleted': 1, 'failed': 1, 'skipped': 3}
+    assert result == {'deleted': 1, 'failed': 1, 'skipped': 3, 'remaining': 0}
+
+
+def test_the_time_budget_stops_the_run_and_reports_what_is_left():
+    ticks = iter(range(100))
+    deleted_ids = []
+    namespace = _compile(
+        ROWS, lambda project_id, config_id: deleted_ids.append(config_id) or {'id': config_id},
+        clock=lambda: float(next(ticks)),
+    )
+
+    # budget 1.5: start at 0, first row checked at 1, stop at 2
+    result = namespace['configurations_delete_section'](None, 7, 'credentials', time_budget=1.5)
+
+    assert result == {'deleted': 1, 'failed': 0, 'skipped': 0, 'remaining': len(ROWS) - 1}
+    assert deleted_ids == [1]

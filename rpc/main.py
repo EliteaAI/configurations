@@ -1,3 +1,4 @@
+import time
 from copy import deepcopy
 from typing import Optional
 
@@ -92,10 +93,12 @@ class RPC:
         return {'count': len(rows), 'blocked': blocked}
 
     @web.rpc('configurations_delete_section')
-    def configurations_delete_section(self, project_id: int, section: str) -> dict:
+    def configurations_delete_section(self, project_id: int, section: str, time_budget: float = None) -> dict:
         """ Bulk project data delete (#7242): every configuration of a section, shared ones
             included. Each goes through delete_configuration so its checks and events apply;
-            the ones kept_by_bulk_delete keeps are skipped """
+            the ones kept_by_bulk_delete keeps are skipped. Stops once time_budget seconds
+            have passed; the ones not reached are returned as remaining """
+        deadline = None if time_budget is None else time.monotonic() + time_budget
         from ..local_tools import db
         from ..models.configuration import Configuration
         with db.get_session(project_id) as session:
@@ -104,8 +107,11 @@ class RPC:
             ).filter(
                 Configuration.project_id == project_id, Configuration.section == section,
             ).all()
-        deleted, failed, skipped = 0, 0, 0
-        for config_id, config_type, title, source in rows:
+        deleted, failed, skipped, remaining = 0, 0, 0, 0
+        for index, (config_id, config_type, title, source) in enumerate(rows):
+            if deadline is not None and time.monotonic() >= deadline:
+                remaining = len(rows) - index
+                break
             if kept_by_bulk_delete(config_type, title, source):
                 skipped += 1
                 continue
@@ -118,7 +124,7 @@ class RPC:
                     "configurations_delete_section: failed to delete configuration %s of project %s",
                     config_id, project_id,
                 )
-        return {'deleted': deleted, 'failed': failed, 'skipped': skipped}
+        return {'deleted': deleted, 'failed': failed, 'skipped': skipped, 'remaining': remaining}
 
     @web.rpc('configurations_expand')
     def configurations_expand(
