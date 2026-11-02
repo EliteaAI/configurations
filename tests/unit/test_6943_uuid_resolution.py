@@ -263,6 +263,83 @@ def test_update_expected_generation_mismatch_changes_nothing(utils):
     assert (row.generation, row.data['url']) == (3, 'u')
 
 
+# --- #7333: private uuid references are per user ------------------------------------------------
+# A private reference saved by one team member carries the creator's uuid and personal project; any other
+# member must resolve it by title to their own private credential, never to the creator's.
+
+CREATOR_PERSONAL = 40  # the toolkit creator's personal project; PERSONAL is the current user's
+
+
+def _ref(row, **extra):
+    return {'private': True, 'elitea_title': row.elitea_title, 'configuration_uuid': str(row.uuid),
+            'configuration_project_id': row.project_id, **extra}
+
+
+def test_another_members_private_uuid_resolves_to_own_same_title_credential(utils):
+    creators = _put(_row(CREATOR_PERSONAL, title='tavily_personal', data={'url': 'creator'}))
+    own = _put(_row(PERSONAL, title='tavily_personal', data={'url': 'own'}))
+    payload = _ref(creators)
+    utils.expand_configuration(payload, CURRENT, user_id=2)
+    assert payload['url'] == 'own'
+    assert payload['configuration_uuid'] == str(own.uuid)
+    assert payload['configuration_project_id'] == PERSONAL
+
+
+def test_another_members_private_uuid_without_own_credential_names_the_title(utils):
+    creators = _put(_row(CREATOR_PERSONAL, title='tavily_personal'))
+    with pytest.raises(LookupError) as err:
+        utils.expand_configuration(_ref(creators), CURRENT, user_id=2)
+    # Title in the metadata lets the UI name the missing credential instead of "unknown"
+    assert err.value.args[1] == {'personal_project_lookup': True, 'elitea_title': 'tavily_personal'}
+
+
+def test_creator_still_resolves_by_uuid_even_after_rename(utils):
+    row = _put(_row(PERSONAL, title='renamed', data={'url': 'mine'}))
+    payload = _ref(row, elitea_title='old_title')  # stored title is stale after a rename
+    utils.expand_configuration(payload, CURRENT, user_id=1)
+    assert payload['url'] == 'mine'
+    assert payload['configuration_uuid'] == str(row.uuid)
+
+
+def test_creator_uuid_does_not_fall_back_to_title_when_deleted(utils):
+    _put(_row(PERSONAL, title='tavily_personal'))  # same title, different credential
+    payload = {'private': True, 'elitea_title': 'tavily_personal', 'configuration_uuid': str(uuidlib.uuid4()),
+               'configuration_project_id': PERSONAL}
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=1)
+
+
+def test_creators_credential_is_never_returned_to_another_member(utils):
+    creators = _put(_row(CREATOR_PERSONAL, title='tavily_personal', data={'url': 'creator'}))
+    payload = _ref(creators)
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=2)
+    assert 'url' not in payload
+
+
+def test_team_uuid_reference_keeps_strict_lookup(utils):
+    _put(_row(CURRENT, title='team_cred'))
+    payload = {'private': False, 'elitea_title': 'team_cred', 'configuration_uuid': str(uuidlib.uuid4()),
+               'configuration_project_id': CURRENT}
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=2)
+
+
+def test_non_private_uuid_from_another_project_is_still_refused(utils):
+    row = _put(_row(OTHER, title='cred'))
+    _put(_row(PERSONAL, title='cred'))
+    payload = {'elitea_title': 'cred', 'configuration_uuid': str(row.uuid), 'configuration_project_id': OTHER}
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=2)
+
+
+def test_private_uuid_without_title_keeps_strict_lookup(utils):
+    creators = _put(_row(CREATOR_PERSONAL, title='tavily_personal'))
+    payload = {'private': True, 'configuration_uuid': str(creators.uuid), 'configuration_project_id': CREATOR_PERSONAL}
+    with pytest.raises(LookupError):
+        utils.expand_configuration(payload, CURRENT, user_id=2)
+
+
 # --- add_configuration_generation_column admin task ------------------------------------------------
 
 class _AdminSession:
