@@ -407,6 +407,13 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
     payload['configuration_generation'] = config.generation
 
 
+def _is_foreign_private_reference(payload: dict, user_id: int = None) -> bool:
+    if not payload.get('private') or user_id is None:
+        return False
+    stored_project_id = payload.get('configuration_project_id')
+    return stored_project_id is not None and str(stored_project_id) != str(get_personal_project_id(user_id))
+
+
 def expand_configuration(payload: dict, current_project_id: int, user_id: int = None,
                          unsecret: bool = False, already_done: list = None, config_type: str = None) -> None:
     """
@@ -424,6 +431,9 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
         already_done = []
     cfg_uuid = payload.get('configuration_uuid')
     title = payload.get('elitea_title') or payload.get('alita_title')
+    if cfg_uuid and title and _is_foreign_private_reference(payload, user_id):
+        # A private credential is per user: another member's uuid resolves by title in this user's personal project
+        cfg_uuid = None
     if cfg_uuid:
         try:
             cfg_uuid = uuidlib.UUID(str(cfg_uuid))
