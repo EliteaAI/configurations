@@ -399,7 +399,7 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
     # Teams/Outlook/SharePoint: a winning Default app replaces the stored one (R8), then the
     # credential takes its client from that app; the credential's own project decides (R6)
     resolve_on_use(payload, config, config.project_id)
-    apply_oauth_app(payload, config.type, current_project_id, unsecret)
+    apply_oauth_app(payload, config.type, config.project_id, unsecret)
 
     payload['configuration_uuid'] = str(config.uuid)
     payload['configuration_project_id'] = config.project_id
@@ -558,7 +558,7 @@ def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected
             data = VaultClient(config.project_id).unsecret(dict(config.data or {}))
             try:
                 resolve_on_use(data, config, config.project_id)
-                apply_oauth_app(data, config.type, project_id, unsecret=True)
+                apply_oauth_app(data, config.type, config.project_id, unsecret=True)
             except LookupError as e:
                 log.warning(f"get_stored_login: {e}")
                 return None
