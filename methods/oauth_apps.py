@@ -8,8 +8,8 @@ from ..oauth_apps import (
     validated_app_data,
 )
 from ..exceptions import ConfigurationError
-from ..local_tools import purge_secrets
-from ..models.pd.oauth_app import MICROSOFT_ENTRA, OAUTH_APP_TYPE
+from ..local_tools import VaultClient, purge_secrets
+from ..models.pd.oauth_app import MICROSOFT_ENTRA, OAUTH_APP_TYPE, token_endpoint
 from ..routing_access import current_actor_id, is_platform_admin
 from ..utils import create_configuration, delete_configuration, update_configuration
 
@@ -140,3 +140,20 @@ class Method:
                 raise ConfigurationError('client_secret', 'Enter the client secret again to test a changed endpoint')
         data = validated_app_data(values, existing=existing)
         return check_app_connection(data)
+
+    @web.method()
+    def oauth_apps_app_only_client(self, app_id: str) -> dict:
+        """Client id, secret and token endpoint of an enabled Entra app, for app-only Graph calls made
+        by the platform itself (SCIM group nesting, #5202). Not for credentials: no project scoping."""
+        config = _load_app(app_id, fresh=True)
+        data = (config.data or {}) if config else None
+        if not data or data.get('enabled') is False:
+            raise LookupError('OAuth app not found or disabled')
+        if (data.get('provider') or MICROSOFT_ENTRA) != MICROSOFT_ENTRA:
+            raise ValueError('Only Microsoft Entra apps can read group nesting')
+        return {
+            'client_id': data.get('client_id'),
+            'client_secret': VaultClient(config.project_id).unsecret(data.get('client_secret')),
+            'token_endpoint': token_endpoint(data),
+            'label': config.label,
+        }
