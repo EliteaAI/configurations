@@ -392,7 +392,8 @@ def decorate_credentials(items: list[dict], project_id: int | None) -> None:
             config = _load_app(app_id)
             cache[app_id] = _app_view(config) if config else None
         app = cache[app_id]
-        reason = unavailable_reason(app, project_id, item.get('type'))
+        # R6: the credential's own project decides, not the project it is listed from
+        reason = unavailable_reason(app, item.get('project_id') or project_id, item.get('type'))
         data.pop('client_secret', None)
         if app:
             data['client_id'] = app.get('client_id')
