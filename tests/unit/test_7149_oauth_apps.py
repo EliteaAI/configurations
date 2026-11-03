@@ -598,3 +598,17 @@ def test_outside_its_projects_the_app_is_never_named(modules):
         reason = modules.apps.unavailable_reason(app, project, 'teams')
         assert 'not available in this project' in reason and 'Contoso' not in reason
     assert 'Contoso' in modules.apps.unavailable_reason({**APP, 'enabled': False}, 5, 'teams')  # in scope: named
+
+
+# --- R6 / #7343: a private credential's app is resolved for its personal project ---------------
+
+def test_private_credential_listed_from_a_team_project_uses_its_own_project(modules, monkeypatch):
+    # Personal project 3 is covered only through Public; team project 25 has an app of its own, so
+    # judging by the listing project would wrongly say "not available in this project".
+    _set_apps(modules, monkeypatch, PUBLIC_DEFAULT, {**TEAM_APP, 'allowed_project_ids': [25]})
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: next(
+        c for c in modules.apps._public_apps() if c.uuid == app_id))
+    item = {'type': 'outlook', 'project_id': 3, 'data': {'oauth_app_id': 'uuid-Public default'}}
+    modules.apps.decorate_credentials([item], 25)
+    assert 'app_error' not in item['data']
+    assert item['data']['client_id'] == 'cid'
