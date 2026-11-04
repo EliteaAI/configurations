@@ -102,6 +102,12 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "migrate_service_prompt_project_context", migrate_project_context_prompts, group="R-2.0.8",
             )
+            migrate_pipeline_prompts = self._wrap_admin_task(
+                Method, "migrate_service_prompt_pipeline_authoring", self
+            )
+            this.for_module("admin").module.register_admin_task(
+                "migrate_service_prompt_pipeline_authoring", migrate_pipeline_prompts, group="R-2.0.9",
+            )
         except Exception as e:
             log.exception("Failed to register admin tasks: %s", e)
 
@@ -125,6 +131,9 @@ class Module(module.ModuleModel):
             )
             this.for_module("admin").module.unregister_admin_task(
                 "migrate_service_prompt_project_context", self.migrate_service_prompt_project_context
+            )
+            this.for_module("admin").module.unregister_admin_task(
+                "migrate_service_prompt_pipeline_authoring", self.migrate_service_prompt_pipeline_authoring
             )
         except Exception as e:
             log.exception("Failed to unregister admin tasks: %s", e)

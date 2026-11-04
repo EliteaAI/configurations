@@ -594,6 +594,101 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         return result
 
     @web.method()
+    def migrate_service_prompt_pipeline_authoring(self, *args, **kwargs):
+        """Upgrade pipeline authoring service prompts to the corrected YAML schema defaults.
+        Param: [dry_run]
+
+        V1 → V2 (first migration): fixed incorrect legacy YAML schema:
+        - `entrypoint: true` on a node instead of top-level `entry_point: <node_id>`
+        - `transitions: [{target: <id>}]` list instead of `transition: <id>` scalar
+        - `conditions: [{label, output}]` on decision nodes instead of `nodes: [id, ...]`
+        - `conditions: [{condition, output}]` on router nodes instead of `routes: [id, ...]`
+        - `type: end` (lowercase) instead of `type: END` (uppercase)
+
+        V2 → V3 (this migration): fixed incorrect end-node pattern:
+        - V2 taught `{ id: end_node, type: END }` as a separate node in the nodes list
+        - Correct schema: `transition: END` on the last real node; no separate end_node entry
+
+        Overwrites each row ONLY if its text matches a known past default byte-for-byte after
+        stripping. Hand-edited prompts are left untouched and reported under skipped_custom.
+
+        Idempotent: rows already on the current default are reported under up_to_date.
+
+        Examples:
+            ""        - live run
+            "dry_run" - dry run
+        """
+        # pylint: disable=C0415
+        from ..models.pd.service_prompt_defaults import (
+            PIPELINE_PROMPT_PAST_DEFAULTS,
+            SERVICE_PROMPT_DEFAULTS,
+        )
+
+        param = kwargs.get("param", "") or ""
+        dry_run = any(seg.strip().lower() == "dry_run" for seg in param.split(";"))
+        prefix = "[DRY RUN] " if dry_run else ""
+        result = {"migrated": [], "up_to_date": [], "skipped_custom": [], "missing": [], "dry_run": dry_run}
+
+        try:
+            public_project_id = get_public_project_id()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_pipeline_authoring: failed to resolve public project id")
+            return {**result, "error": "failed to resolve public project id"}
+
+        if not public_project_id:
+            log.error("migrate_service_prompt_pipeline_authoring: public project id is not configured")
+            return {**result, "error": "public project id is not configured"}
+
+        try:
+            with db.get_session(public_project_id) as session:
+                for key in sorted(PIPELINE_PROMPT_PAST_DEFAULTS):
+                    cfg = session.query(Configuration).filter_by(
+                        elitea_title=key, type="service_prompt",
+                    ).first()
+                    if not cfg:
+                        result["missing"].append(key)
+                        continue
+
+                    current_prompt = ((cfg.data or {}).get("prompt") or "").strip()
+                    if current_prompt == SERVICE_PROMPT_DEFAULTS[key].strip():
+                        result["up_to_date"].append(key)
+                        continue
+                    if current_prompt not in {p.strip() for p in PIPELINE_PROMPT_PAST_DEFAULTS[key]}:
+                        log.warning(
+                            "%smigrate_service_prompt_pipeline_authoring: configuration id=%s (%s) "
+                            "does not match any known past default — assuming it was customized; "
+                            "leaving it untouched.",
+                            prefix, cfg.id, key,
+                        )
+                        result["skipped_custom"].append(key)
+                        continue
+
+                    result["migrated"].append(key)
+                    log.info(
+                        "%smigrate_service_prompt_pipeline_authoring: configuration id=%s (%s) "
+                        "matches a past default — %s to the current template",
+                        prefix, cfg.id, key, "would update" if dry_run else "updating",
+                    )
+                    if not dry_run:
+                        updated_data = deepcopy(cfg.data or {})
+                        updated_data["prompt"] = SERVICE_PROMPT_DEFAULTS[key]
+                        cfg.data = updated_data
+                        flag_modified(cfg, "data")
+
+                if result["migrated"] and not dry_run:
+                    session.commit()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_pipeline_authoring: migration failed")
+            return {**result, "migrated": [], "error": "migration failed"}
+
+        log.info(
+            "%smigrate_service_prompt_pipeline_authoring: %s %s, up to date %s, skipped custom %s, missing %s",
+            prefix, "would migrate" if dry_run else "migrated", result["migrated"],
+            result["up_to_date"], result["skipped_custom"], result["missing"],
+        )
+        return result
+
+    @web.method()
     def danger_sanitize_secrets_with_value(self, *args, **kwargs):
         """Admin task: sanitize secrets and credentials for staging environments.
 
