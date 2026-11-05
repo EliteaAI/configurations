@@ -109,7 +109,7 @@ def test_delete_skips_the_kept_credentials_and_deletes_the_rest():
 
     result = namespace['configurations_delete_section'](None, 7, 'credentials')
 
-    assert result == {'deleted': 2, 'failed': 0, 'skipped': 3}
+    assert result == {'deleted': 2, 'failed': 0, 'skipped': 3, 'remaining': 0}
     assert deleted_ids == [1, 2]
 
 
@@ -127,4 +127,17 @@ def test_a_failing_delete_is_counted_and_does_not_stop_the_rest():
 
     result = _compile(ROWS, delete_configuration)['configurations_delete_section'](None, 7, 'credentials')
 
-    assert result == {'deleted': 1, 'failed': 1, 'skipped': 3}
+    assert result == {'deleted': 1, 'failed': 1, 'skipped': 3, 'remaining': 0}
+
+
+def test_delete_accepts_the_time_budget_the_bulk_delete_passes():
+    """ #7416: the admin endpoint calls it with time_budget; a TypeError there failed the whole type """
+    result = _compile(ROWS)['configurations_delete_section'](None, 7, 'credentials', time_budget=60)
+
+    assert result == {'deleted': 2, 'failed': 0, 'skipped': 3, 'remaining': 0}
+
+
+def test_an_exhausted_time_budget_reports_the_rest_as_remaining():
+    result = _compile(ROWS)['configurations_delete_section'](None, 7, 'credentials', time_budget=0)
+
+    assert result == {'deleted': 0, 'failed': 0, 'skipped': 0, 'remaining': 5}
