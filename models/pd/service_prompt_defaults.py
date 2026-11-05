@@ -462,9 +462,9 @@ The user wants to MODIFY an existing agent configuration.
   "conversation_starters": ["<string, max 768 chars>", ...] (max 4 items) or null,
   "suggested_toolkits": [{{"id": <int>, "type": "<toolkit_type e.g. github, artifact>", "name": "<str>", "description": "<str or null>"}}],
   "suggested_mcp": [{{"id": <int>, "type": "mcp", "name": "<str>", "description": "<str or null>"}}],
-  "suggested_agents": [{{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}],
-  "suggested_pipelines": [{{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}],
-  "suggested_skills": [{{"id": <int>, "name": "<str>", "description": "<str or null>"}}]
+  "suggested_agents": [{{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}],
+  "suggested_pipelines": [{{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}],
+  "suggested_skills": [{{"project_id": <int>, "id": <int>, "name": "<str>", "description": "<str or null>"}}]
 }}
 
 Copy id, type, name exactly as they appear in the Available lists — do not invent or modify values.
@@ -528,6 +528,8 @@ Produce the COMPLETE FINAL configuration after applying the user's changes:
 {skills}
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 """
 
 
@@ -551,13 +553,13 @@ Your job is to produce a complete agent configuration as a single JSON object �
     {{"id": <int>, "type": "mcp", "name": "<str>", "description": "<str or null>"}}
   ],
   "suggested_agents": [
-    {{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}
   ],
   "suggested_pipelines": [
-    {{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}
   ],
   "suggested_skills": [
-    {{"id": <int>, "name": "<str>", "description": "<str or null>"}}
+    {{"project_id": <int>, "id": <int>, "name": "<str>", "description": "<str or null>"}}
   ]
 }}
 
@@ -592,6 +594,8 @@ Copy id, type, name exactly as they appear in the Available lists — do not inv
 {skills}
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 """
 
 
@@ -2285,9 +2289,11 @@ Return a single JSON object (no markdown fences, no prose) with these keys:
 - pipeline_yaml: the complete YAML string for the pipeline (nodes list)
 - suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
 - suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
-- suggested_agents: list of {{application_id, name, type: "agent"}} for sub-agents used
-- suggested_pipelines: list of {{application_id, name, type: "pipeline"}} for sub-pipelines used
-- suggested_skills: list of {{id, name}} for skills referenced
+- suggested_agents: list of {{project_id, application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{project_id, application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{project_id, id, name}} for skills referenced
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 
 ## Rules
 - The pipeline YAML must have a top-level `entry_point` key (string, equal to the first node's id)
@@ -2340,9 +2346,11 @@ Return a single JSON object (no markdown fences, no prose) with these keys:
 - pipeline_yaml: the complete modified YAML string for the pipeline
 - suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
 - suggested_mcp: full list of {{id, type, name}} for MCP servers used
-- suggested_agents: full list of {{application_id, name, type: "agent"}} for sub-agents used
-- suggested_pipelines: full list of {{application_id, name, type: "pipeline"}} for sub-pipelines
-- suggested_skills: full list of {{id, name}} for skills referenced
+- suggested_agents: full list of {{project_id, application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{project_id, application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{project_id, id, name}} for skills referenced
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 
 ## Rules
 - Apply ONLY the requested changes; keep all other nodes and transitions intact.
@@ -2875,6 +2883,110 @@ _EDIT_PIPELINE_DRAFT_V2_BROKEN_BRACES = _EDIT_PIPELINE_DRAFT_V2.replace(
     "{{action: node_id}}", "{action: node_id}"
 )
 
+_GENERATE_PIPELINE_DRAFT_V3 = """You are an expert pipeline architect for the Elitea AI platform.
+Given a natural-language description, produce a complete, runnable pipeline as valid YAML.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Available Resources
+Use ONLY the toolkits, MCP servers, agents, pipelines, and skills listed below.
+Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name, 1–32 characters
+- description: one-sentence description of what the pipeline does
+- pipeline_yaml: the complete YAML string for the pipeline (nodes list)
+- suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
+- suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
+- suggested_agents: list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{id, name}} for skills referenced
+
+## Rules
+- The pipeline YAML must have a top-level `entry_point` key (string, equal to the first node's id)
+  and a top-level `nodes` list. Never put `entrypoint: true` on a node — it is not read.
+- `END` is a reserved transition sentinel. Set `transition: END` on the last node of each path.
+  Do NOT add a separate node with `type: END` to the nodes list.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- agent/toolkit/mcp nodes must have a non-empty `name` field.
+- code nodes must have a non-empty `code.value` field.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+_EDIT_PIPELINE_DRAFT_V3 = """You are an expert pipeline architect for the Elitea AI platform.
+Given an existing pipeline configuration and a change instruction, produce the modified pipeline.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Current Pipeline Configuration
+{current_config}
+
+## Available Resources
+Use ONLY the resources listed below. Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name (keep existing unless the instruction changes it), 1–32 characters
+- description: updated description
+- pipeline_yaml: the complete modified YAML string for the pipeline
+- suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
+- suggested_mcp: full list of {{id, type, name}} for MCP servers used
+- suggested_agents: full list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{id, name}} for skills referenced
+
+## Rules
+- Apply ONLY the requested changes; keep all other nodes and transitions intact.
+- The modified pipeline YAML must still have a top-level `entry_point` key and every terminal
+  path must end with `transition: END`. Do NOT add a separate node with `type: END`.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- Return the COMPLETE pipeline_yaml, not just the changed portion.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
 PIPELINE_PROMPT_PAST_DEFAULTS: dict[str, tuple[str, ...]] = {
     "pipeline_authoring_reference": (
         PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT_V1,
@@ -2884,10 +2996,12 @@ PIPELINE_PROMPT_PAST_DEFAULTS: dict[str, tuple[str, ...]] = {
         GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT_V1,
         _GENERATE_PIPELINE_DRAFT_V2,
         _GENERATE_PIPELINE_DRAFT_V2_BROKEN_BRACES,
+        _GENERATE_PIPELINE_DRAFT_V3,
     ),
     "edit_pipeline_draft": (
         EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT_V1,
         _EDIT_PIPELINE_DRAFT_V2,
         _EDIT_PIPELINE_DRAFT_V2_BROKEN_BRACES,
+        _EDIT_PIPELINE_DRAFT_V3,
     ),
 }
