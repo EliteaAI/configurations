@@ -186,6 +186,8 @@ def resolve_app_client(app_id, project_id: int | None, credential_type: str | No
         'token_endpoint': token_endpoint(config.data or {}),
         # The admin's scopes, never the caller's: the platform's client is used only for these
         'scopes': resolved.get('scopes') or recommended_scopes(credential_type),
+        # Auto refresh token: offline_access is asked for only while it is on (#7415)
+        'auto_refresh_token': resolved.get('auto_refresh_token', True),
     }
 
 
