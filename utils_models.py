@@ -215,40 +215,30 @@ class ModelConfigurationService:
 
         return default_model_name, default_model_project_id
 
-    def determine_explicit_default_model(self, default_model_name_secret, default_model_project_id_secret, distinct_items: dict, predicate=None):
-        """Determine a default model only if explicitly set (no fallback).
-
-        Optionally apply a predicate(model_data) filter.
-        """
-        if not default_model_name_secret or not default_model_project_id_secret:
-            return None, None
-
-        for (proj_id, model_name), model_data in distinct_items.items():
-            if model_name != default_model_name_secret:
-                continue
-            if str(proj_id) != str(default_model_project_id_secret):
-                continue
-            if predicate and not predicate(model_data):
-                return None, None
-            return model_name, proj_id
-
+    def resolve_llm_default(self, section: str, distinct_items: dict, pointers: 'DefaultModelPointers', fallback=None):
+        """Resolve an LLM default: own pointer, then Public's, then the fallback, then the first in display order."""
+        predicate = TIER_PREDICATES.get(section, accepts_any_model)
+        for read_pointer in (pointers.own_pointer, pointers.public_pointer):
+            found = find_pointed_model(read_pointer(section), distinct_items, predicate)
+            if found:
+                return found
+        if fallback and fallback[0]:
+            return fallback
+        for key in keys_in_display_order(distinct_items):
+            if predicate(distinct_items[key]):
+                return key[1], key[0]
         return None, None
 
     def prepare_response(self, distinct_items: dict, default_model_name: str, default_model_project_id: int):
         """Prepare the final response with default flags"""
         items_with_default_flag = []
-        for (proj_id, model_name), model_data in distinct_items.items():
+        for key in keys_in_display_order(distinct_items):
+            proj_id, model_name = key
+            model_data = distinct_items[key]
             model_data['default'] = (
                 model_name == default_model_name and proj_id == default_model_project_id
             )
             items_with_default_flag.append(model_data)
-
-        # Sort by shared status and display_name (fallback to name if display_name not present)
-        if items_with_default_flag:
-            items_with_default_flag.sort(key=lambda x: (
-                not x['shared'],
-                (x.get('display_name') or x.get('name', '')).lower()
-            ))
 
         return {
             "total": len(distinct_items),
@@ -278,40 +268,83 @@ class ModelConfigurationService:
 
         distinct_items = self.get_available_models(section, include_shared)
 
-        # Get default model information
-        default_model_name_secret, default_model_project_id_secret = self.get_default_model_info(section)
+        if section != 'llm':
+            default_model_name, default_model_project_id = self.determine_default_model(
+                *self.get_default_model_info(section), distinct_items
+            )
+            return self.prepare_response(distinct_items, default_model_name, default_model_project_id), 200
 
-        # Determine the actual default model
-        default_model_name, default_model_project_id = self.determine_default_model(
-            default_model_name_secret, default_model_project_id_secret, distinct_items
+        pointers = DefaultModelPointers(self.project_id, self.public_project_id)
+        low_tier = self.resolve_llm_default('llm_low_tier', distinct_items, pointers)
+        high_tier = self.resolve_llm_default('llm_high_tier', distinct_items, pointers)
+        default_model_name, default_model_project_id = self.resolve_llm_default(
+            section, distinct_items, pointers, fallback=low_tier
         )
 
-        # Prepare response
         response = self.prepare_response(distinct_items, default_model_name, default_model_project_id)
-
-        # Extend LLM section response with tier defaults (stored under their own vault keys)
-        if section == 'llm':
-            low_tier_name_secret, low_tier_project_id_secret = self.get_default_model_info('llm_low_tier')
-            high_tier_name_secret, high_tier_project_id_secret = self.get_default_model_info('llm_high_tier')
-
-            low_tier_name, low_tier_project_id = self.determine_explicit_default_model(
-                low_tier_name_secret,
-                low_tier_project_id_secret,
-                distinct_items,
-                predicate=lambda model_data: model_data.get('low_tier') is True,
-            )
-            high_tier_name, high_tier_project_id = self.determine_explicit_default_model(
-                high_tier_name_secret,
-                high_tier_project_id_secret,
-                distinct_items,
-                predicate=lambda model_data: model_data.get('high_tier') is True,
-            )
-
-            response.update({
-                'low_tier_default_model_name': low_tier_name or '',
-                'low_tier_default_model_project_id': low_tier_project_id or '',
-                'high_tier_default_model_name': high_tier_name or '',
-                'high_tier_default_model_project_id': high_tier_project_id or '',
-            })
-
+        response.update({
+            'low_tier_default_model_name': low_tier[0] or '',
+            'low_tier_default_model_project_id': low_tier[1] or '',
+            'high_tier_default_model_name': high_tier[0] or '',
+            'high_tier_default_model_project_id': high_tier[1] or '',
+        })
         return response, 200
+
+
+TIER_PREDICATES = {
+    'llm_low_tier': lambda model_data: model_data.get('low_tier') is True,
+    'llm_high_tier': lambda model_data: model_data.get('high_tier') is True,
+}
+
+
+def accepts_any_model(model_data: dict) -> bool:
+    """Default sections take any available model."""
+    return True
+
+
+def keys_in_display_order(distinct_items: dict) -> list:
+    """Shared first, then display name, with project and name breaking ties so the order never varies."""
+    def display_order_key(item_key):
+        proj_id, model_name = item_key
+        model_data = distinct_items[item_key]
+        display_name = (model_data.get('display_name') or model_data.get('name') or model_name or '').lower()
+        return not model_data.get('shared'), display_name, proj_id, model_name
+    return sorted(distinct_items, key=display_order_key)
+
+
+def find_pointed_model(pointer: tuple, distinct_items: dict, predicate):
+    """Return (name, project_id) of the available model a vault pointer names, if it passes the predicate."""
+    pointer_name, pointer_project_id = pointer
+    if not pointer_name or not pointer_project_id:
+        return None
+    for (proj_id, model_name), model_data in distinct_items.items():
+        if model_name == pointer_name and str(proj_id) == str(pointer_project_id) and predicate(model_data):
+            return model_name, proj_id
+    return None
+
+
+class DefaultModelPointers:
+    """Default-model vault pointers, reading each vault at most once and Public's only when needed."""
+
+    def __init__(self, project_id: int, public_project_id: int):
+        self.project_id = project_id
+        self.public_project_id = public_project_id
+        self._own_secrets = None
+        self._public_secrets = None
+
+    def own_pointer(self, section: str) -> tuple:
+        """The project's own (name, project_id) pointer for a section."""
+        if self._own_secrets is None:
+            self._own_secrets = VaultClient.from_project(self.project_id).get_secrets()
+        return pointer_from_secrets(self._own_secrets, section)
+
+    def public_pointer(self, section: str) -> tuple:
+        """Public's (name, project_id) pointer for a section, inherited by every project."""
+        if self._public_secrets is None:
+            self._public_secrets = VaultClient.from_project(self.public_project_id).get_all_secrets()
+        return pointer_from_secrets(self._public_secrets, section)
+
+
+def pointer_from_secrets(secrets: dict, section: str) -> tuple:
+    """Read a section's default pointer as one (name, project_id) pair."""
+    return secrets.get(f'default_{section}_model_name'), secrets.get(f'default_{section}_model_project_id')
