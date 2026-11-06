@@ -253,3 +253,39 @@ def test_canonical_override_changes_fingerprint(inventory):
     before = inventory.module.get_routing_models(7, 42)['items'][0]['configuration_fingerprint']
     inventory.db.rows[0]['data']['canonical_model'] = 'openai/gpt-5-6-luna'
     assert inventory.module.get_routing_models(7, 42)['items'][0]['configuration_fingerprint'] != before
+
+
+def _limits_item(name, window, output, *, available=True, kind='chat'):
+    return {'name': name, 'available': available, 'identity': {'kind': kind},
+            'context_window': window, 'max_output_tokens': output}
+
+
+def test_auto_model_limits_empty_inventory_is_empty(inventory):
+    assert inventory.module.auto_model_limits([]) == {}
+
+
+def test_auto_model_limits_skips_unavailable_and_non_chat(inventory):
+    items = [_limits_item('a', 1000, 100, available=False), _limits_item('b', 2000, 200, kind='embedding'),
+             {'name': 'c', 'available': False, 'exclusion_reason': 'ambiguous_model_configuration'}]
+    assert inventory.module.auto_model_limits(items) == {}
+
+
+def test_auto_model_limits_picks_smallest_window_and_output(inventory):
+    items = [_limits_item('a', 272000, 16000), _limits_item('b', 1000000, 8000),
+             _limits_item('c', 128000, 64000, available=False), _limits_item('d', 64000, 4000, kind='embedding')]
+    assert inventory.module.auto_model_limits(items) == {
+        'context_window': 272000, 'max_output_tokens': 8000, 'models': 2}
+
+
+def test_auto_model_limits_one_model(inventory):
+    assert inventory.module.auto_model_limits([_limits_item('a', 400000, 32000)]) == {
+        'context_window': 400000, 'max_output_tokens': 32000, 'models': 1}
+
+
+def test_auto_model_limits_rpc_reads_actor_inventory(inventory):
+    inventory.db.rows = [row(1, 7, name='gpt-5.6-luna-2026-07-09', context_window=272000, max_output_tokens=16000),
+                         row(2, 7, name='gpt-5.6-sol-2026-07-09', context_window=400000, max_output_tokens=8000),
+                         row(3, 7, name='gpt-5.6-terra-2026-07-09', healthy=False, context_window=1000)]
+    assert inventory.rpc.configurations_get_auto_model_limits(7, 42) == {
+        'context_window': 272000, 'max_output_tokens': 8000, 'models': 2}
+    assert inventory.actor_calls == [(7, 42), (1, 42)]
