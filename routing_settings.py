@@ -2,10 +2,10 @@
 import hashlib
 import json
 
-from pydantic import ValidationError
+from pydantic import TypeAdapter, ValidationError
 
 from .common_utils import get_public_project_id
-from .models.pd.auto_routing import ClassifierRef, routing_enabled
+from .models.pd.auto_routing import ClassifierRef, EscalationMode, routing_enabled
 from .utils_getters import get_project_configuration
 
 
@@ -22,6 +22,17 @@ def _ref(value):
         return None
     try:
         return ClassifierRef.model_validate(value).model_dump()
+    except ValidationError:
+        return None
+
+
+_MODE = TypeAdapter(EscalationMode)
+
+
+def _mode(value):
+    """A stored escalation mode, or None (the Gateway default) when unset or malformed."""
+    try:
+        return None if value is None else _MODE.validate_python(value, strict=True)
     except ValidationError:
         return None
 
@@ -101,7 +112,13 @@ def effective_settings(environment, project, low_tier=None, items=None):
     # Project classifier, else project Low-tier model, else platform classifier (#6826 A1); covered by revision.
     refs = classifier_refs(env_data, project_data, low_tier)
     fields['classifier'] = resolve_classifier(refs, items)
+    # The Auto routing mode (#6722) is covered by revision when set; an unset mode leaves the revision of
+    # projects that never chose one unchanged.
+    mode = _mode(project_data.get('escalation_mode'))
+    if mode is not None:
+        fields['escalation_mode'] = mode
     fields['revision'] = hashlib.sha256(json.dumps(fields, sort_keys=True).encode()).hexdigest()
+    fields['escalation_mode'] = mode
     # Why no classifier resolved; derived from the resolution above, so not part of revision.
     fields['classifier_reason'] = classifier_reason(fields['classifier'], refs, items)
     return fields
