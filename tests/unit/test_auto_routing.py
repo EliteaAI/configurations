@@ -88,7 +88,7 @@ def test_project_control_owners(modules, monkeypatch, project_admin, personal_ow
     monkeypatch.setattr(modules.guard, 'is_project_admin', lambda p, u: p == 7 and u == 42 and project_admin)
     monkeypatch.setattr(modules.guard, 'is_own_personal_project', lambda p, u: p == 7 and u == 42 and personal_owner)
     result = modules.guard.validate_routing_write('auto_routing', 7, {'data': {'enabled': True}})
-    assert result['data'] == {'enabled': True, 'classifier': None}
+    assert result['data'] == {'enabled': True, 'classifier': None, 'escalation_mode': None}
     with pytest.raises(modules.error):
         modules.guard.validate_routing_write('auto_routing', 8, {'data': {'enabled': True}})
 

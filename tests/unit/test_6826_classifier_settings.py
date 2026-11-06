@@ -278,7 +278,8 @@ def _project_write(env, data, old=None):
 
 def test_project_accepts_visible_chat_classifier(env):
     env.state.inventory = {7: [item('claude-haiku-4-5', project_id=7, shared=False)]}
-    assert _project_write(env, {'enabled': True, 'classifier': HAIKU})['data'] == {'enabled': True, 'classifier': HAIKU}
+    assert _project_write(env, {'enabled': True, 'classifier': HAIKU})['data'] == {'enabled': True, 'classifier': HAIKU,
+                                                                               'escalation_mode': None}
     assert env.state.inventory_calls == [(7, 42)]
 
 
@@ -297,7 +298,8 @@ def test_project_refuses_invisible_unavailable_or_non_chat(env, inventory):
 def test_unchanged_stale_classifier_is_accepted_changed_invalid_is_refused(env):
     env.state.inventory = {7: []}
     old = {'enabled': True, 'classifier': HAIKU}
-    assert _project_write(env, {'enabled': False, 'classifier': HAIKU}, old)['data'] == {'enabled': False, 'classifier': HAIKU}
+    assert _project_write(env, {'enabled': False, 'classifier': HAIKU}, old)['data'] == {'enabled': False, 'classifier': HAIKU,
+                                                                                         'escalation_mode': None}
     assert env.state.inventory_calls == []
     with pytest.raises(env.error, match='not available'):
         _project_write(env, {'enabled': False, 'classifier': {**HAIKU, 'name': 'other'}}, old)
@@ -306,7 +308,8 @@ def test_unchanged_stale_classifier_is_accepted_changed_invalid_is_refused(env):
 def test_null_is_always_accepted_and_omitted_is_preserved(env):
     old = {'enabled': True, 'classifier': HAIKU}
     assert _project_write(env, {'enabled': True, 'classifier': None}, old)['data']['classifier'] is None
-    assert _project_write(env, {'enabled': False}, old)['data'] == {'enabled': False, 'classifier': HAIKU}
+    assert _project_write(env, {'enabled': False}, old)['data'] == {'enabled': False, 'classifier': HAIKU,
+                                                                    'escalation_mode': None}
     assert env.state.inventory_calls == []
 
 
@@ -320,6 +323,64 @@ def test_project_classifier_still_requires_project_admin(env):
 def test_malformed_project_classifier_is_a_configuration_error(env):
     with pytest.raises(env.error):
         _project_write(env, {'classifier': {'name': 'm', 'project_id': 7, 'extra': 1}})
+
+
+# --- escalation mode (#6722): the Auto routing mode of the project --------------------------
+
+MODES = ('economical', 'tiered', 'premium_at_deep', 'premium_from_standard')
+
+
+def test_escalation_mode_defaults_to_unset(env):
+    assert env.pd.AutoRoutingProjectSettings().escalation_mode is None
+    assert _effective(env)['escalation_mode'] is None
+
+
+@pytest.mark.parametrize('mode', MODES)
+def test_each_escalation_mode_is_accepted_and_served(env, mode):
+    assert env.pd.AutoRoutingProjectSettings(escalation_mode=mode).escalation_mode == mode
+    assert _project_write(env, {'escalation_mode': mode})['data']['escalation_mode'] == mode
+    env.state.records = {PUBLIC: {'data': {'auto_routing_available': True}}, 7: {'data': {'escalation_mode': mode}}}
+    assert env.rpc.configurations_get_auto_routing_settings(7, 42)['escalation_mode'] == mode
+
+
+@pytest.mark.parametrize('value', ['premium', 'ECONOMICAL', '', 1, True, ['tiered'], {'mode': 'tiered'}])
+def test_an_unknown_escalation_mode_is_refused(env, value):
+    with pytest.raises(ValidationError):
+        env.pd.AutoRoutingProjectSettings(escalation_mode=value)
+    with pytest.raises(env.error):
+        _project_write(env, {'escalation_mode': value})
+
+
+def test_a_malformed_stored_escalation_mode_reads_as_unset(env):
+    environment = {'data': {'auto_routing_available': True}}
+    for value in ('premium', 1, ['tiered']):
+        assert env.settings.effective_settings(environment, {'data': {'escalation_mode': value}})['escalation_mode'] is None
+
+
+def test_revision_changes_with_the_escalation_mode_and_not_when_unset(env):
+    environment = {'data': {'auto_routing_available': True, 'auto_routing_project_default': True}}
+    revision = lambda data: env.settings.effective_settings(environment, {'data': data})['revision']
+    revisions = {mode: revision({'escalation_mode': mode}) for mode in MODES}
+    assert len(set(revisions.values()) | {revision({})}) == len(MODES) + 1
+    # Projects that never set a mode keep the revision they had, so their pins stay valid on upgrade.
+    assert revision({'escalation_mode': None}) == revision({})
+
+
+def test_escalation_mode_omitted_is_preserved_and_null_clears_it(env):
+    old = {'enabled': True, 'classifier': None, 'escalation_mode': 'premium_at_deep'}
+    assert _project_write(env, {'enabled': False}, old)['data']['escalation_mode'] == 'premium_at_deep'
+    assert _project_write(env, {'enabled': True, 'escalation_mode': None}, old)['data']['escalation_mode'] is None
+    assert _project_write(env, {'escalation_mode': 'economical'}, old)['data'] == {
+        'enabled': None, 'classifier': None, 'escalation_mode': 'economical'}
+
+
+def test_escalation_mode_requires_project_admin(env):
+    env.state.project_admin = False
+    with pytest.raises(env.error, match='project admins'):
+        _project_write(env, {'escalation_mode': 'economical'})
+    env.state.project_admin, env.state.actor = True, None
+    with pytest.raises(env.error, match='project admins'):
+        _project_write(env, {'escalation_mode': 'economical'})
 
 
 # --- platform write validation ------------------------------------------------------------

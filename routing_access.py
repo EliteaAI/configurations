@@ -129,6 +129,7 @@ def validate_routing_write(config_type, project_id, payload, *, existing=None, d
         if incoming is not None:
             merged = dict(incoming)
             merged.setdefault('classifier', old_data.get('classifier'))
+            merged.setdefault('escalation_mode', old_data.get('escalation_mode'))
             result['data'] = _validated_data(AutoRoutingProjectSettings, merged)
             _check_new_classifier(result['data']['classifier'], old_data.get('classifier'), project_id, actor)
         return result
