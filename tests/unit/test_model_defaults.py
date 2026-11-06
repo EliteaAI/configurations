@@ -130,3 +130,26 @@ def test_actual_post_snapshots_effective_default_before_vault_write():
     service.return_value.get_models.return_value = ({'default_model_name': None}, 200)
     assert namespace['post'](None, 7)[1] == 400
     vault.set_secrets.assert_not_called()
+
+
+def test_actual_get_attaches_auto_limits_from_loaded_inventory():
+    path = ROOT/'api/v2/models.py'
+    fn = next(n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.FunctionDef) and n.name == 'get')
+    fn.decorator_list = []
+    for node in ast.walk(fn):
+        if isinstance(node, ast.If):
+            node.body = [n for n in node.body if not isinstance(n, ast.ImportFrom)]
+    items = [{'name': 'luna'}]
+    service = MagicMock()
+    service.return_value.get_models.return_value = ({'items': []}, 200)
+    namespace = {'request': MagicMock(args=MagicMock(get=lambda key, default: default)),
+        'ModelConfigurationService': service,
+        'get_classifier_state': lambda *a, **k: ({'enabled': True, 'revision': 'r'}, [], items),
+        'readiness': lambda *a: {'ready': True}, 'current_actor_id': lambda: 42,
+        'effective_default_selection': lambda *a: {}, 'VaultClient': MagicMock(),
+        'auto_model_limits': lambda value: {'context_window': 272000, 'seen': value}}
+    exec(compile(ast.Module(body=[fn], type_ignores=[]), str(path), 'exec'), namespace)
+    result, status = namespace['get'](None, 7)
+    assert status == 200
+    assert result['auto_routing']['limits'] == {'context_window': 272000, 'seen': items}
+    assert result['auto_routing']['revision'] == 'r'
