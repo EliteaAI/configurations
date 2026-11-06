@@ -233,6 +233,41 @@ def delete_configuration(project_id: int, config_id: int, owner: str | None = No
     return data
 
 
+TIER_DEFAULT_KEYS = {
+    'low_tier': ('default_llm_low_tier_model_name', 'default_llm_low_tier_model_project_id'),
+    'high_tier': ('default_llm_high_tier_model_name', 'default_llm_high_tier_model_project_id'),
+}
+
+
+def tier_default_candidates(previous_data: dict, data: dict) -> list:
+    """Tier flags whose default may move to this model: the flag was just turned on, or the model was renamed."""
+    name = str(data.get('name') or '').strip()
+    if not name:
+        return []
+    renamed = name != str(previous_data.get('name') or '').strip()
+    return [
+        flag for flag in TIER_DEFAULT_KEYS
+        if data.get(flag) is True and (previous_data.get(flag) is not True or renamed)
+    ]
+
+
+def tier_default_updates(previous_data: dict, data: dict, project_id: int, secrets: dict) -> dict:
+    """Point a tier default at this model only when its flag turns on, or when it is the default being renamed."""
+    name = str(data.get('name') or '').strip()
+    previous_name = str(previous_data.get('name') or '').strip()
+    updates = {}
+    for flag in tier_default_candidates(previous_data, data):
+        name_key, project_key = TIER_DEFAULT_KEYS[flag]
+        turned_on = previous_data.get(flag) is not True
+        is_renamed_default = (
+            secrets.get(name_key) == previous_name and str(secrets.get(project_key)) == str(project_id)
+        )
+        if turned_on or is_renamed_default:
+            updates[name_key] = name
+            updates[project_key] = project_id
+    return updates
+
+
 def update_configuration(project_id: int, config_id: int, update_payload: dict,
                          expected_generation: int | None = None, owner: str | None = None) -> dict:
     """
@@ -329,25 +364,15 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
             session.commit()
             session.refresh(config)
 
-            # If an LLM model is marked as a tier model, make it the tier default (last write wins).
             # Run after commit so config data is stored even if vault update fails.
-            if config.type == 'llm_model':
+            if config.type == 'llm_model' and tier_default_candidates(previous_data, config.data or {}):
                 try:
-                    model_name = str((config.data or {}).get('name') or '').strip()
-                    model_project_id = int(config.project_id)
-                    secrets_to_update = {}
-
-                    if (config.data or {}).get('low_tier') is True and model_name:
-                        secrets_to_update['default_llm_low_tier_model_name'] = model_name
-                        secrets_to_update['default_llm_low_tier_model_project_id'] = model_project_id
-
-                    if (config.data or {}).get('high_tier') is True and model_name:
-                        secrets_to_update['default_llm_high_tier_model_name'] = model_name
-                        secrets_to_update['default_llm_high_tier_model_project_id'] = model_project_id
-
+                    vault_client = VaultClient.from_project(project_id)
+                    secrets = vault_client.get_secrets()
+                    secrets_to_update = tier_default_updates(
+                        previous_data, config.data or {}, int(config.project_id), secrets
+                    )
                     if secrets_to_update:
-                        vault_client = VaultClient.from_project(project_id)
-                        secrets = vault_client.get_secrets()
                         secrets.update(secrets_to_update)
                         vault_client.set_secrets(secrets)
                 except Exception as e:
