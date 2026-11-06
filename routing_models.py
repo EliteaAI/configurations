@@ -135,3 +135,14 @@ def get_routing_models(project_id, user_id):
     snapshot = {'schema_version': 1, 'project_id': project_id, 'user_id': user_id,
                 'public_project_id': public_project_id, 'items': items}
     return {**snapshot, 'revision': _digest(snapshot)}
+
+
+def auto_model_limits(items):
+    """Smallest limits among the models Auto can pick: available chat models (#7445)."""
+    eligible = [item for item in items
+                if item.get('available') is True and (item.get('identity') or {}).get('kind') == 'chat']
+    if not eligible:
+        return {}
+    return {'context_window': min(item['context_window'] for item in eligible),
+            'max_output_tokens': min(item['max_output_tokens'] for item in eligible),
+            'models': len(eligible)}
