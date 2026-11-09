@@ -5,7 +5,7 @@ Covers:
 - SERVICE_PROMPT_DEFAULTS maps each key to a non-empty string
 - Template slots for generate_pipeline_draft, edit_pipeline_draft, configure_node_with_ai
 - pipeline_authoring_reference is a non-template reference document (not format()-able)
-- PIPELINE_PROMPT_PAST_DEFAULTS contains migration entries for the three versioned prompts
+- PIPELINE_PROMPT_PAST_DEFAULTS contains migration entries for the versioned prompts, schedule draft included
 - ServicePrompt model accepts / rejects the new keys correctly
 
 Run via:
@@ -253,6 +253,7 @@ class TestPipelinePromptPastDefaults:
         assert "pipeline_authoring_reference" in past
         assert "generate_pipeline_draft" in past
         assert "edit_pipeline_draft" in past
+        assert "generate_schedule_draft" in past
 
     def test_each_entry_is_non_empty_tuple(self, past):
         for key, versions in past.items():

@@ -605,9 +605,13 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         - `conditions: [{condition, output}]` on router nodes instead of `routes: [id, ...]`
         - `type: end` (lowercase) instead of `type: END` (uppercase)
 
-        V2 → V3 (this migration): fixed incorrect end-node pattern:
+        V2 → V3: fixed incorrect end-node pattern:
         - V2 taught `{ id: end_node, type: END }` as a separate node in the nodes list
         - Correct schema: `transition: END` on the last real node; no separate end_node entry
+
+        Schedule draft: `generate_schedule_draft` moves from the agent and pipeline text to the
+        text with the `{toolkit_indexes}` slot and the `index_name` field. The task name keeps
+        "pipeline" because it is already registered.
 
         Overwrites each row ONLY if its text matches a known past default byte-for-byte after
         stripping. Hand-edited prompts are left untouched and reported under skipped_custom.
