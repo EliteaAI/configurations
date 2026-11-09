@@ -6,7 +6,10 @@ from tools import api_tools, rpc_tools
 from ...local_tools import APIBase, current_user, log, auth, config as c, register_openapi
 from ...models.pd.configuration import ConfigurationCreateBase
 from ...models.pd.registry import managed_configuration_error
-from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type
+from ...tracing_access import (
+    can_manage_project_settings, can_manage_stored_login, can_manage_tracing, is_project_settings_type,
+    is_tracing_type,
+)
 from ...utils import create_configuration, get_configurations
 from ...exceptions import ConfigurationError
 from ...models.pd.registry import ADMIN_MANAGED_TYPES
@@ -171,6 +174,8 @@ class API(APIBase):
                 f"Blocked tracing configuration create by user {data['author_id']} in project {project_id}"
             )
             return {"error": "Tracing configurations are managed by project admins", "field": "type"}, 403
+        if is_project_settings_type(data.get('type')) and not can_manage_project_settings(project_id, data['author_id']):
+            return {"error": "Project settings are managed by project admins", "field": "type"}, 403
         managed = managed_configuration_error(data.get('type'), data.get('elitea_title'), project_id)
         if managed:
             return managed, 403
