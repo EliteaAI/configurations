@@ -689,6 +689,89 @@ class Method:  # pylint: disable=E1101,R0903,W0201
         return result
 
     @web.method()
+    def migrate_service_prompt_application_draft(self, *args, **kwargs):
+        """Upgrade the 'generate_application_draft' and 'edit_application_draft' service prompts
+        to the current defaults, which take the Chat Starters limit from the
+        {max_conversation_starters} placeholder instead of a hardcoded 4.
+        Param: [dry_run]
+
+        ``ensure_default_service_prompts`` never updates existing rows, so this task overwrites a
+        row's prompt ONLY if it still matches one of APPLICATION_DRAFT_PAST_DEFAULTS after
+        stripping. A hand-edited prompt is left untouched and reported under ``skipped_custom``;
+        it keeps working, but keeps asking for its own number of starters.
+
+        Idempotent: rows already on the current default are reported under ``up_to_date``.
+
+        Examples:
+            ""        - live run
+            "dry_run" - dry run
+        """
+        # pylint: disable=C0415
+        from ..models.pd.service_prompt_defaults import (
+            APPLICATION_DRAFT_PAST_DEFAULTS,
+            SERVICE_PROMPT_DEFAULTS,
+        )
+
+        param = kwargs.get("param", "") or ""
+        dry_run = any(seg.strip().lower() == "dry_run" for seg in param.split(";"))
+        prefix = "[DRY RUN] " if dry_run else ""
+        result = {"migrated": [], "up_to_date": [], "skipped_custom": [], "missing": [], "dry_run": dry_run}
+
+        try:
+            public_project_id = get_public_project_id()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_application_draft: failed to resolve public project id")
+            return {**result, "error": "failed to resolve public project id"}
+
+        if not public_project_id:
+            log.error("migrate_service_prompt_application_draft: public project id is not configured")
+            return {**result, "error": "public project id is not configured"}
+
+        try:
+            with db.get_session(public_project_id) as session:
+                for key in sorted(APPLICATION_DRAFT_PAST_DEFAULTS):
+                    cfg = session.query(Configuration).filter_by(
+                        elitea_title=key, type="service_prompt",
+                    ).first()
+                    if not cfg:
+                        result["missing"].append(key)
+                        continue
+
+                    current_prompt = ((cfg.data or {}).get("prompt") or "").strip()
+                    if current_prompt == SERVICE_PROMPT_DEFAULTS[key].strip():
+                        result["up_to_date"].append(key)
+                        continue
+                    if current_prompt not in {p.strip() for p in APPLICATION_DRAFT_PAST_DEFAULTS[key]}:
+                        log.warning(
+                            "%smigrate_service_prompt_application_draft: configuration id=%s (%s) does "
+                            "not match any known past default — assuming it was customized; leaving it "
+                            "untouched. Add {max_conversation_starters} to it by hand if you want it.",
+                            prefix, cfg.id, key,
+                        )
+                        result["skipped_custom"].append(key)
+                        continue
+
+                    result["migrated"].append(key)
+                    if not dry_run:
+                        updated_data = deepcopy(cfg.data or {})
+                        updated_data["prompt"] = SERVICE_PROMPT_DEFAULTS[key]
+                        cfg.data = updated_data
+                        flag_modified(cfg, "data")
+
+                if result["migrated"] and not dry_run:
+                    session.commit()
+        except Exception:  # pylint: disable=W0703
+            log.exception("migrate_service_prompt_application_draft: migration failed")
+            return {**result, "migrated": [], "error": "migration failed"}
+
+        log.info(
+            "%smigrate_service_prompt_application_draft: %s %s, up to date %s, skipped custom %s, missing %s",
+            prefix, "would migrate" if dry_run else "migrated", result["migrated"],
+            result["up_to_date"], result["skipped_custom"], result["missing"],
+        )
+        return result
+
+    @web.method()
     def danger_sanitize_secrets_with_value(self, *args, **kwargs):
         """Admin task: sanitize secrets and credentials for staging environments.
 
