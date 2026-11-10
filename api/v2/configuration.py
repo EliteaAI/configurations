@@ -6,7 +6,10 @@ from ...local_tools import db, APIBase, log, auth, config as c, rpc_manager, reg
 from ...models.configuration import Configuration
 from ...models.pd.configuration import ConfigurationDetails, ConfigurationUpdate
 from ...models.pd.registry import ADMIN_MANAGED_TYPES, managed_configuration_error
-from ...tracing_access import can_manage_stored_login, can_manage_tracing, is_tracing_type, stored_login_changed
+from ...tracing_access import (
+    can_manage_project_settings, can_manage_stored_login, can_manage_tracing, is_project_settings_type,
+    is_tracing_type, stored_login_changed,
+)
 from ...utils import update_configuration, delete_configuration, get_options_for_nested_fields
 from ...folder_access import require_folder_access
 from ...oauth_apps import decorate_credentials
@@ -14,6 +17,7 @@ from ...oauth_apps import decorate_credentials
 TRACING_DENIED = {"error": "Tracing configurations are managed by project admins"}
 STORED_LOGIN_DENIED = "Only project admins can log in or out on a team credential"
 ADMIN_MANAGED_DENIED = {"error": "This configuration is managed in the Admin Portal"}
+PROJECT_SETTINGS_DENIED = {"error": "Project settings are managed by project admins"}
 
 
 def deny_tracing_access(project_id: int, config_type: str | None) -> bool:
@@ -38,6 +42,9 @@ def refuse_write(project_id: int, config_type: str | None, title: str | None = N
         return TRACING_DENIED, 403
     if config_type in ADMIN_MANAGED_TYPES:
         return ADMIN_MANAGED_DENIED, 403
+    if is_project_settings_type(config_type) and not can_manage_project_settings(
+            project_id, auth.current_user().get('id')):
+        return PROJECT_SETTINGS_DENIED, 403
     managed = managed_configuration_error(config_type, title, project_id)
     if managed:
         return managed, 403

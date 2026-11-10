@@ -127,7 +127,8 @@ class Harness:
                 ADMIN_MANAGED_TYPES=self.registry.ADMIN_MANAGED_TYPES)
         _module(f"{API_PACKAGE}.tracing_access", can_manage_tracing=lambda *_: True,
                 can_manage_stored_login=lambda *_: True, stored_login_changed=lambda *_: False,
-                is_tracing_type=lambda _type: False)
+                is_tracing_type=lambda _type: False, is_project_settings_type=lambda _type: False,
+                can_manage_project_settings=lambda *_: True)
         _module(f"{API_PACKAGE}.utils", get_configurations=record("list", {}),
                 create_configuration=record("create", {"id": 1}),
                 update_configuration=record("update", {"id": 1}),
