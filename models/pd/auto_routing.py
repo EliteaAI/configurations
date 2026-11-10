@@ -1,5 +1,10 @@
 """Project availability override; profile qualification is a separate contract."""
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt
+
+# Where Auto starts per demand (#6722); the Gateway owns the semantics. Unset is the Gateway default (`tiered`).
+EscalationMode = Literal['economical', 'tiered', 'premium_at_deep', 'premium_from_standard']
 
 
 class ClassifierRef(BaseModel):
@@ -23,6 +28,10 @@ class AutoRoutingProjectSettings(BaseModel):
     classifier: ClassifierRef | None = Field(
         default=None,
         description='Model that classifies Auto requests. Unset inherits the platform default classifier.',
+    )
+    escalation_mode: EscalationMode | None = Field(
+        default=None,
+        description='Auto routing mode: where Auto starts at each demand. Unset uses the default (tiered).',
     )
 
 

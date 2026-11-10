@@ -645,3 +645,16 @@ def test_ms_graph_scopes_reject_other_resources(modules, scopes):
         modules.apps.validated_app_data(
             {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': ['ms_graph'],
              'scopes': {'ms_graph': scopes}})
+
+@pytest.mark.parametrize('stored, expected', [(False, False), (True, True), ('missing', True)])
+def test_proxy_client_carries_the_app_auto_refresh_switch(modules, monkeypatch, stored, expected):
+    """#7415: the proxy asks for offline_access only while the admin app's Auto refresh is on."""
+    app = {**APP, 'label': 'Teams app', 'credential_types': ['teams']}
+    if stored == 'missing':
+        app.pop('auto_refresh_token', None)
+    else:
+        app['auto_refresh_token'] = stored
+    _set_apps(modules, monkeypatch, app)
+    monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
+    assert modules.apps.resolve_app_client('uuid-Teams app', 5, 'teams')['auto_refresh_token'] is expected
+

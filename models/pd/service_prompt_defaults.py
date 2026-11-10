@@ -462,9 +462,9 @@ The user wants to MODIFY an existing agent configuration.
   "conversation_starters": ["<string, max 768 chars>", ...] (max 4 items) or null,
   "suggested_toolkits": [{{"id": <int>, "type": "<toolkit_type e.g. github, artifact>", "name": "<str>", "description": "<str or null>"}}],
   "suggested_mcp": [{{"id": <int>, "type": "mcp", "name": "<str>", "description": "<str or null>"}}],
-  "suggested_agents": [{{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}],
-  "suggested_pipelines": [{{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}],
-  "suggested_skills": [{{"id": <int>, "name": "<str>", "description": "<str or null>"}}]
+  "suggested_agents": [{{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}],
+  "suggested_pipelines": [{{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}],
+  "suggested_skills": [{{"project_id": <int>, "id": <int>, "name": "<str>", "description": "<str or null>"}}]
 }}
 
 Copy id, type, name exactly as they appear in the Available lists — do not invent or modify values.
@@ -528,6 +528,8 @@ Produce the COMPLETE FINAL configuration after applying the user's changes:
 {skills}
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 """
 
 
@@ -551,13 +553,13 @@ Your job is to produce a complete agent configuration as a single JSON object �
     {{"id": <int>, "type": "mcp", "name": "<str>", "description": "<str or null>"}}
   ],
   "suggested_agents": [
-    {{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}
   ],
   "suggested_pipelines": [
-    {{"application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}
   ],
   "suggested_skills": [
-    {{"id": <int>, "name": "<str>", "description": "<str or null>"}}
+    {{"project_id": <int>, "id": <int>, "name": "<str>", "description": "<str or null>"}}
   ]
 }}
 
@@ -592,6 +594,8 @@ Copy id, type, name exactly as they appear in the Available lists — do not inv
 {skills}
 
 Return ONLY the JSON object. Do not wrap in markdown fences.
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
 """
 
 
@@ -1487,22 +1491,1517 @@ Rules:
 - Return ONLY the JSON object, with no prose, no code fences and no extra keys."""
 
 
+# PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT_V1 is a frozen copy of the original seeded default,
+# which taught the model an incorrect YAML schema (entrypoint: true on a node, transitions: list,
+# conditions: on router/decision). Kept so migrate_service_prompt_pipeline_authoring can
+# recognise an untouched seeded row and upgrade it. Never edit this constant.
+PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT_V1 = """# Pipeline Authoring Reference
+
+## Overview
+A pipeline is a LangGraph-based workflow defined as YAML. The top-level key is `nodes` (a list).
+Every node has `id` (unique string), `type` (one of the types below), and type-specific fields.
+Transitions between nodes are defined via `transitions` (list of `{target: <node_id>}`) or
+`output`/`default_output` shorthands. Every pipeline must have exactly one entrypoint node
+(`entrypoint: true`) and at least one `end` node reachable from it.
+
+---
+
+## Node Types
+
+### llm
+Calls an LLM with system + task prompts.
+Required: `id`, `type: llm`
+Optional: `system` (string), `task` (string), `llm_settings` (`{model_name, temperature, max_tokens}`),
+          `input_mapping` (dict), `output_mapping` (dict), `transitions`
+Example:
+```yaml
+- id: generate_summary
+  type: llm
+  entrypoint: true
+  system: "You are a helpful summariser."
+  task: "Summarise the following text: {state.input_text}"
+  llm_settings:
+    model_name: gpt-4o
+    temperature: 0.3
+  output_mapping:
+    summary: response
+  transitions:
+    - target: print_result
+```
+
+### code
+Executes Python in a Pyodide sandbox.
+Required: `id`, `type: code`, `code` (`{type: fixed|variable, value: <python string>}`)
+Optional: `input_mapping`, `output_mapping`, `structured_output` (bool), `transitions`
+Example:
+```yaml
+- id: process_data
+  type: code
+  code:
+    type: fixed
+    value: |
+      items = elitea_state.get("items", [])
+      {"count": len(items), "first": items[0] if items else None}
+  output_mapping:
+    count: count
+  transitions:
+    - target: end_node
+```
+
+### agent
+Calls another Elitea agent as a sub-agent.
+Required: `id`, `type: agent`, `name` (agent display name or tool name)
+Optional: `input_mapping`, `output_mapping`, `transitions`
+Example:
+```yaml
+- id: call_reviewer
+  type: agent
+  name: code_reviewer_agent
+  input_mapping:
+    code: state.code_snippet
+  transitions:
+    - target: end_node
+```
+
+### toolkit
+Calls a toolkit tool.
+Required: `id`, `type: toolkit`, `name` (toolkit instance name)
+Optional: `tool_name` (specific tool in the toolkit), `input_mapping`, `output_mapping`, `transitions`
+Example:
+```yaml
+- id: fetch_jira
+  type: toolkit
+  name: my_jira_toolkit
+  tool_name: get_issue
+  input_mapping:
+    issue_key: state.issue_id
+  transitions:
+    - target: end_node
+```
+
+### mcp
+Calls an MCP server tool.
+Required: `id`, `type: mcp`, `name` (MCP server name)
+Optional: `tool_name`, `input_mapping`, `output_mapping`, `transitions`
+Example:
+```yaml
+- id: search_web
+  type: mcp
+  name: brave_search
+  tool_name: web_search
+  input_mapping:
+    query: state.search_query
+  transitions:
+    - target: end_node
+```
+
+### router
+Routes based on a condition evaluated against state.
+Required: `id`, `type: router`
+Optional: `conditions` (list of `{condition: <expr>, output: <node_id>}`), `default_output` (node_id), `transitions`
+Example:
+```yaml
+- id: check_approval
+  type: router
+  conditions:
+    - condition: "state.approved == true"
+      output: process_approved
+    - condition: "state.approved == false"
+      output: process_rejected
+  default_output: process_rejected
+```
+
+### decision
+AI-powered routing: LLM decides the next step.
+Required: `id`, `type: decision`
+Optional: `description` (string, guides the LLM), `conditions` (list of `{label, output}`), `default_output`, `llm_settings`, `transitions`
+Example:
+```yaml
+- id: decide_next
+  type: decision
+  description: "Route based on sentiment of user_message"
+  conditions:
+    - label: positive
+      output: handle_positive
+    - label: negative
+      output: handle_negative
+  default_output: handle_neutral
+```
+
+### state_modifier
+Transforms pipeline state using a Jinja2 template.
+Required: `id`, `type: state_modifier`
+Optional: `template` (Jinja2 string), `input_mapping`, `output_mapping`, `transitions`
+Example:
+```yaml
+- id: format_output
+  type: state_modifier
+  template: "Summary: {{ state.summary }}\nScore: {{ state.score }}"
+  output_mapping:
+    formatted: result
+  transitions:
+    - target: end_node
+```
+
+### printer
+Outputs a final message to the user.
+Required: `id`, `type: printer`
+Optional: `input_mapping` (maps state keys to the output), `final_message` (string template), `transitions`
+Example:
+```yaml
+- id: print_result
+  type: printer
+  final_message: "Here is your result: {state.summary}"
+  transitions:
+    - target: end_node
+```
+
+### hitl
+Human-in-the-loop: pauses execution and asks the user a question.
+Required: `id`, `type: hitl`
+Optional: `user_message` (string prompt shown to user), `input_mapping`, `output_mapping`, `transitions`
+Example:
+```yaml
+- id: ask_approval
+  type: hitl
+  user_message: "Please review and approve: {state.draft}"
+  output_mapping:
+    user_response: approval_input
+  transitions:
+    - target: check_approval
+```
+
+### custom
+A flexible node whose actual execution type is set at runtime.
+Required: `id`, `type: custom`
+Optional: Any fields valid for the underlying execution type; `transitions`
+
+### end
+Terminates the pipeline.
+Required: `id`, `type: end`
+No additional fields needed.
+Example:
+```yaml
+- id: end_node
+  type: end
+```
+
+---
+
+## Wiring Patterns
+
+### Pattern 1: Sequential chain
+```yaml
+nodes:
+  - id: step_one
+    type: llm
+    entrypoint: true
+    system: "You are a planner."
+    task: "{state.user_input}"
+    transitions:
+      - target: step_two
+  - id: step_two
+    type: printer
+    final_message: "Plan: {state.response}"
+    transitions:
+      - target: end_node
+  - id: end_node
+    type: end
+```
+
+### Pattern 2: Branching router
+```yaml
+nodes:
+  - id: classify
+    type: llm
+    entrypoint: true
+    system: "Classify the intent."
+    task: "{state.message}"
+    transitions:
+      - target: route_intent
+  - id: route_intent
+    type: router
+    conditions:
+      - condition: "state.response == 'question'"
+        output: answer_question
+      - condition: "state.response == 'task'"
+        output: execute_task
+    default_output: answer_question
+  - id: answer_question
+    type: llm
+    system: "Answer concisely."
+    task: "{state.message}"
+    transitions:
+      - target: end_node
+  - id: execute_task
+    type: toolkit
+    name: my_toolkit
+    transitions:
+      - target: end_node
+  - id: end_node
+    type: end
+```
+
+### Pattern 3: Agent calls toolkit
+```yaml
+nodes:
+  - id: fetch_data
+    type: toolkit
+    entrypoint: true
+    name: github_toolkit
+    tool_name: get_pull_request
+    input_mapping:
+      pr_number: state.pr_id
+    transitions:
+      - target: review
+  - id: review
+    type: agent
+    name: code_review_agent
+    input_mapping:
+      code: state.pr_diff
+    transitions:
+      - target: end_node
+  - id: end_node
+    type: end
+```
+
+### Pattern 4: HITL approval gate
+```yaml
+nodes:
+  - id: generate_draft
+    type: llm
+    entrypoint: true
+    system: "Draft a response."
+    task: "{state.request}"
+    transitions:
+      - target: approve
+  - id: approve
+    type: hitl
+    user_message: "Please approve or reject this draft: {state.response}"
+    output_mapping:
+      user_response: decision
+    transitions:
+      - target: check_decision
+  - id: check_decision
+    type: router
+    conditions:
+      - condition: "state.decision == 'approve'"
+        output: send_response
+    default_output: generate_draft
+  - id: send_response
+    type: printer
+    final_message: "Approved: {state.response}"
+    transitions:
+      - target: end_node
+  - id: end_node
+    type: end
+```
+
+---
+
+## Rules Summary
+- Every pipeline needs `entrypoint: true` on exactly one node.
+- Every pipeline needs at least one `end` node reachable via transitions.
+- `agent`, `toolkit`, and `mcp` nodes require a non-empty `name` field.
+- `code` nodes require a non-empty `code` field.
+- Only suggest resources (agents, toolkits, MCPs) from the provided resource list.
+- Keep node ids short, lowercase, and descriptive (e.g. `generate_summary`, `check_approval`).
+"""
+
+
+# GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT_V1 is a frozen copy of the original seeded default.
+# Kept for migration detection only. Never edit.
+GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT_V1 = """You are an expert pipeline architect for the Elitea AI platform.
+Given a natural-language description, produce a complete, runnable pipeline as valid YAML.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Available Resources
+Use ONLY the toolkits, MCP servers, agents, pipelines, and skills listed below.
+Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name, 1–32 characters
+- description: one-sentence description of what the pipeline does
+- pipeline_yaml: the complete YAML string for the pipeline (nodes list)
+- suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
+- suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
+- suggested_agents: list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{id, name}} for skills referenced
+
+## Rules
+- The pipeline YAML must have a top-level `nodes` list.
+- Exactly one node must have `entrypoint: true`.
+- Every pipeline must end with at least one `end` node reachable from the entrypoint.
+- All transitions must reference existing node ids.
+- agent/toolkit/mcp nodes must have a non-empty `name` field.
+- code nodes must have a non-empty `code.value` field.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+
+# EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT_V1 is a frozen copy of the original seeded default.
+# Kept for migration detection only. Never edit.
+EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT_V1 = """You are an expert pipeline architect for the Elitea AI platform.
+Given an existing pipeline configuration and a change instruction, produce the modified pipeline.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Current Pipeline Configuration
+{current_config}
+
+## Available Resources
+Use ONLY the resources listed below. Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name (keep existing unless the instruction changes it), 1–32 characters
+- description: updated description
+- pipeline_yaml: the complete modified YAML string for the pipeline
+- suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
+- suggested_mcp: full list of {{id, type, name}} for MCP servers used
+- suggested_agents: full list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{id, name}} for skills referenced
+
+## Rules
+- Apply ONLY the requested changes; keep all other nodes and transitions intact.
+- The modified pipeline YAML must still have a valid entrypoint and a reachable end node.
+- All transitions must reference existing node ids.
+- Return the COMPLETE pipeline_yaml, not just the changed portion.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+
+PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT = """# Pipeline Authoring Reference
+
+## Overview
+A pipeline is a LangGraph-based workflow defined as YAML. The top-level keys are `nodes` (a list)
+and `entry_point` (a string equal to the id of the first node to execute).
+Every node has `id` (unique string), `type` (one of the types below), and type-specific fields.
+Simple transitions use `transition: <node_id>` (a scalar string on the node itself).
+Branching nodes (router, decision, hitl) use their own dedicated fields instead of `transition`.
+Every pipeline must set `entry_point` at the top level. The last node in the flow uses
+`transition: END` — `END` is a reserved sentinel value, NOT a node type.
+Do NOT add a separate node with `type: END` to the nodes list.
+
+---
+
+## Top-level structure
+
+```yaml
+entry_point: first_node_id   # required — id of the node that runs first
+nodes:
+  - id: first_node_id
+    type: llm
+    ...
+    transition: last_node_id
+  - id: last_node_id
+    type: printer
+    ...
+    transition: END   # END is a reserved sentinel — the pipeline stops here
+```
+
+---
+
+## Node Types
+
+### llm
+Calls an LLM with system + task prompts.
+Required: `id`, `type: llm`
+Optional: `system` (string), `task` (string), `llm_settings` (`{model_name, temperature, max_tokens}`),
+          `input_mapping` (dict), `output_mapping` (dict), `transition` (node_id string)
+Example:
+```yaml
+entry_point: generate_summary
+nodes:
+  - id: generate_summary
+    type: llm
+    system: "You are a helpful summariser."
+    task: "Summarise the following text: {state.input_text}"
+    llm_settings:
+      model_name: gpt-4o
+      temperature: 0.3
+    output_mapping:
+      summary: response
+    transition: print_result
+  - id: print_result
+    type: printer
+    final_message: "Summary: {state.summary}"
+    transition: END
+```
+
+### code
+Executes Python in a Pyodide sandbox.
+Required: `id`, `type: code`, `code` (`{type: fixed|variable, value: <python string>}`)
+Optional: `input_mapping`, `output_mapping`, `structured_output` (bool), `transition`
+Example:
+```yaml
+- id: process_data
+  type: code
+  code:
+    type: fixed
+    value: |
+      items = elitea_state.get("items", [])
+      {"count": len(items), "first": items[0] if items else None}
+  output_mapping:
+    count: count
+  transition: END
+```
+
+### agent
+Calls another Elitea agent as a sub-agent.
+Required: `id`, `type: agent`, `name` (agent display name or tool name)
+Optional: `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: call_reviewer
+  type: agent
+  name: code_reviewer_agent
+  input_mapping:
+    code: state.code_snippet
+  transition: END
+```
+
+### toolkit
+Calls a toolkit tool.
+Required: `id`, `type: toolkit`, `name` (toolkit instance name)
+Optional: `tool_name` (specific tool in the toolkit), `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: fetch_jira
+  type: toolkit
+  name: my_jira_toolkit
+  tool_name: get_issue
+  input_mapping:
+    issue_key: state.issue_id
+  transition: END
+```
+
+### mcp
+Calls an MCP server tool.
+Required: `id`, `type: mcp`, `name` (MCP server name)
+Optional: `tool_name`, `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: search_web
+  type: mcp
+  name: brave_search
+  tool_name: web_search
+  input_mapping:
+    query: state.search_query
+  transition: END
+```
+
+### router
+Routes based on Jinja2 conditions evaluated against state.
+The router node does NOT use `transition`. Instead it uses `routes` (list of node_ids) and
+`default_output` (a single node_id fallback).
+Required: `id`, `type: router`
+Optional: `routes` (list of target node_id strings), `default_output` (node_id string)
+
+The Jinja2 condition template is stored in `template` and must output exactly one of the node_ids
+listed in `routes`, or fall through to `default_output`.
+Example:
+```yaml
+- id: check_approval
+  type: router
+  template: |
+    {% if state.approved == true %}
+    process_approved
+    {% else %}
+    process_rejected
+    {% endif %}
+  routes:
+    - process_approved
+    - process_rejected
+  default_output: process_rejected
+```
+
+### decision
+AI-powered routing: an LLM decides the next step.
+The decision node does NOT use `transition`. Instead it uses `nodes` (list of target node_ids) and
+`default_output` (a single node_id fallback).
+Required: `id`, `type: decision`
+Optional: `description` (string guiding the LLM), `nodes` (list of node_id strings),
+          `default_output` (node_id string), `llm_settings`
+Example:
+```yaml
+- id: decide_next
+  type: decision
+  description: "Route based on sentiment of user_message"
+  nodes:
+    - handle_positive
+    - handle_negative
+  default_output: handle_neutral
+```
+
+### state_modifier
+Transforms pipeline state using a Jinja2 template.
+Required: `id`, `type: state_modifier`
+Optional: `template` (Jinja2 string), `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: format_output
+  type: state_modifier
+  template: "Summary: {{ state.summary }}\nScore: {{ state.score }}"
+  output_mapping:
+    formatted: result
+  transition: END
+```
+
+### printer
+Outputs a final message to the user.
+Required: `id`, `type: printer`
+Optional: `input_mapping` (maps state keys to the output), `final_message` (string template), `transition`
+Example:
+```yaml
+- id: print_result
+  type: printer
+  final_message: "Here is your result: {state.summary}"
+  transition: END
+```
+
+### hitl
+Human-in-the-loop: pauses execution and asks the user a question.
+The hitl node does NOT use `transition`. Instead it uses `routes` (an object mapping action names
+to target node_ids).
+Required: `id`, `type: hitl`
+Optional: `user_message` (string prompt shown to user), `input_mapping`, `output_mapping`,
+          `routes` (object: `{<action>: <node_id>}`)
+Example:
+```yaml
+- id: ask_approval
+  type: hitl
+  user_message: "Please review and approve: {state.draft}"
+  output_mapping:
+    user_response: approval_input
+  routes:
+    approve: send_response
+    reject: generate_draft
+```
+
+### custom
+A flexible node whose actual execution type is set at runtime.
+Required: `id`, `type: custom`
+Optional: Any fields valid for the underlying execution type; `transition`
+
+---
+
+## Terminating a Pipeline
+
+`END` is a **reserved transition sentinel**, not a node type. The last node in any execution path
+must set `transition: END`. Do NOT add a separate node with `type: END` to the nodes list.
+
+```yaml
+# CORRECT — last real node uses transition: END
+- id: print_result
+  type: printer
+  final_message: "Done: {state.response}"
+  transition: END
+
+# WRONG — never add a fake end_node to the nodes list
+- id: end_node   # ← do not do this
+  type: END
+```
+
+---
+
+## Wiring Patterns
+
+### Pattern 1: Sequential chain
+```yaml
+entry_point: step_one
+nodes:
+  - id: step_one
+    type: llm
+    system: "You are a planner."
+    task: "{state.user_input}"
+    transition: step_two
+  - id: step_two
+    type: printer
+    final_message: "Plan: {state.response}"
+    transition: END
+```
+
+### Pattern 2: Branching router
+```yaml
+entry_point: classify
+nodes:
+  - id: classify
+    type: llm
+    system: "Classify the intent."
+    task: "{state.message}"
+    transition: route_intent
+  - id: route_intent
+    type: router
+    template: |
+      {% if state.response == 'question' %}
+      answer_question
+      {% elif state.response == 'task' %}
+      execute_task
+      {% else %}
+      answer_question
+      {% endif %}
+    routes:
+      - answer_question
+      - execute_task
+    default_output: answer_question
+  - id: answer_question
+    type: llm
+    system: "Answer concisely."
+    task: "{state.message}"
+    transition: END
+  - id: execute_task
+    type: toolkit
+    name: my_toolkit
+    transition: END
+```
+
+### Pattern 3: Agent calls toolkit
+```yaml
+entry_point: fetch_data
+nodes:
+  - id: fetch_data
+    type: toolkit
+    name: github_toolkit
+    tool_name: get_pull_request
+    input_mapping:
+      pr_number: state.pr_id
+    transition: review
+  - id: review
+    type: agent
+    name: code_review_agent
+    input_mapping:
+      code: state.pr_diff
+    transition: END
+```
+
+### Pattern 4: HITL approval gate
+```yaml
+entry_point: generate_draft
+nodes:
+  - id: generate_draft
+    type: llm
+    system: "Draft a response."
+    task: "{state.request}"
+    transition: approve
+  - id: approve
+    type: hitl
+    user_message: "Please approve or reject this draft: {state.response}"
+    output_mapping:
+      user_response: decision
+    routes:
+      approve: send_response
+      reject: generate_draft
+  - id: send_response
+    type: printer
+    final_message: "Approved: {state.response}"
+    transition: END
+```
+
+---
+
+## Rules Summary
+- `entry_point` is a top-level key equal to the id of the first node. Never put `entrypoint: true`
+  on a node — that field is not read by the pipeline engine.
+- `END` is a reserved transition sentinel — set `transition: END` on the last node of each path.
+  Do NOT add a separate node with `type: END` to the nodes list.
+- Simple (non-branching) nodes connect to the next step via `transition: <node_id>` (a scalar
+  string on the node). Do NOT use a `transitions:` list.
+- Router nodes use `routes: [node_id, ...]` and `default_output: node_id` for branching.
+  Do NOT put `transition` on a router node.
+- Decision nodes use `nodes: [node_id, ...]` and `default_output: node_id` for branching.
+  Do NOT put `transition` on a decision node.
+- HITL nodes use `routes: {action: node_id}` (an object) for branching.
+  Do NOT put `transition` on a hitl node.
+- `agent`, `toolkit`, and `mcp` nodes require a non-empty `name` field.
+- `code` nodes require a non-empty `code` field.
+- Only suggest resources (agents, toolkits, MCPs) from the provided resource list.
+- Keep node ids short, lowercase, and descriptive (e.g. `generate_summary`, `check_approval`).
+"""
+
+
+GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT = """You are an expert pipeline architect for the Elitea AI platform.
+Given a natural-language description, produce a complete, runnable pipeline as valid YAML.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Available Resources
+Use ONLY the toolkits, MCP servers, agents, pipelines, and skills listed below.
+Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name, 1–32 characters
+- description: one-sentence description of what the pipeline does
+- pipeline_yaml: the complete YAML string for the pipeline (nodes list)
+- suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
+- suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
+- suggested_agents: list of {{project_id, application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{project_id, application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{project_id, id, name}} for skills referenced
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
+
+## Rules
+- The pipeline YAML must have a top-level `entry_point` key (string, equal to the first node's id)
+  and a top-level `nodes` list. Never put `entrypoint: true` on a node — it is not read.
+- `END` is a reserved transition sentinel. Set `transition: END` on the last node of each path.
+  Do NOT add a separate node with `type: END` to the nodes list.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- agent/toolkit/mcp nodes must have a non-empty `name` field.
+- code nodes must have a non-empty `code.value` field.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+
+EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT = """You are an expert pipeline architect for the Elitea AI platform.
+Given an existing pipeline configuration and a change instruction, produce the modified pipeline.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Current Pipeline Configuration
+{current_config}
+
+## Available Resources
+Use ONLY the resources listed below. Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name (keep existing unless the instruction changes it), 1–32 characters
+- description: updated description
+- pipeline_yaml: the complete modified YAML string for the pipeline
+- suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
+- suggested_mcp: full list of {{id, type, name}} for MCP servers used
+- suggested_agents: full list of {{project_id, application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{project_id, application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{project_id, id, name}} for skills referenced
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
+
+## Rules
+- Apply ONLY the requested changes; keep all other nodes and transitions intact.
+- The modified pipeline YAML must still have a top-level `entry_point` key and every terminal
+  path must end with `transition: END`. Do NOT add a separate node with `type: END`.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- Return the COMPLETE pipeline_yaml, not just the changed portion.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+
+CONFIGURE_NODE_WITH_AI_DEFAULT_PROMPT = """You are an expert pipeline node configurator for the Elitea AI platform.
+Given a node type, a description of what the node should do, and the current node configuration,
+return a complete set of field values for that node.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for the node type's required and
+optional fields, and for field value formats.
+
+## Node Type
+{node_type}
+
+## Available State Variables
+{state_variables}
+
+## Available Node IDs (for transitions)
+{available_nodes}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) containing the field values for the node.
+Include ALL required fields for the node type, and any optional fields that improve the node's
+behaviour for the described task.
+
+Do NOT include `id` or `type` in the output (they are already set).
+
+## Rules
+- Transition targets must be one of the available node IDs listed above.
+- Use only state variable names listed above in input_mapping and output_mapping.
+- For code nodes, the `code.value` must be valid Python runnable in a Pyodide sandbox.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+
 SERVICE_PROMPT_DEFAULTS: dict[str, str] = {
     "code_assistant": CODE_ASSISTANT_DEFAULT_PROMPT,
+    "configure_node_with_ai": CONFIGURE_NODE_WITH_AI_DEFAULT_PROMPT,
     "decision_assistant": DECISION_ASSISTANT_DEFAULT_PROMPT,
     "edit_application_draft": EDIT_APPLICATION_DRAFT_DEFAULT_PROMPT,
+    "edit_pipeline_draft": EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT,
     "edit_project_context_draft": EDIT_PROJECT_CONTEXT_DRAFT_DEFAULT_PROMPT,
     "edit_skill_draft": EDIT_SKILL_DRAFT_DEFAULT_PROMPT,
     "generate_application_draft": GENERATE_APPLICATION_DRAFT_DEFAULT_PROMPT,
     "enhance_agent_from_eval": ENHANCE_AGENT_FROM_EVAL_DEFAULT_PROMPT,
     "generate_eval_dimensions": GENERATE_EVAL_DIMENSIONS_DEFAULT_PROMPT,
+    "generate_pipeline_draft": GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT,
     "generate_schedule_draft": GENERATE_SCHEDULE_DRAFT_DEFAULT_PROMPT,
     "llm_system_assistant": LLM_SYSTEM_ASSISTANT_DEFAULT_PROMPT,
     "llm_task_assistant": LLM_TASK_ASSISTANT_DEFAULT_PROMPT,
     "mermaid_quick_fix": MERMAID_QUICK_FIX_DEFAULT_PROMPT,
+    "pipeline_authoring_reference": PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT,
     "printer_assistant": PRINTER_ASSISTANT_DEFAULT_PROMPT,
     "project_context_generator": PROJECT_CONTEXT_GENERATOR_DEFAULT_PROMPT,
     "router_assistant": ROUTER_ASSISTANT_DEFAULT_PROMPT,
     "skill_generator": SKILL_GENERATOR_DEFAULT_PROMPT,
     "state_modifier_assistant": STATE_MODIFIER_ASSISTANT_DEFAULT_PROMPT,
+}
+
+
+# V2 frozen copies: the second-generation defaults that used entry_point + a separate
+# `type: END` end_node.  These are what the first migration wrote into the DB.
+# Kept for migration detection only. Never edit.
+_PIPELINE_AUTHORING_REFERENCE_V2 = """# Pipeline Authoring Reference
+
+## Overview
+A pipeline is a LangGraph-based workflow defined as YAML. The top-level keys are `nodes` (a list)
+and `entry_point` (a string equal to the id of the first node to execute).
+Every node has `id` (unique string), `type` (one of the types below), and type-specific fields.
+Simple transitions use `transition: <node_id>` (a scalar string on the node itself).
+Branching nodes (router, decision, hitl) use their own dedicated fields instead of `transition`.
+Every pipeline must set `entry_point` at the top level and have at least one end node reachable
+from it (a node with `type: END`).
+
+---
+
+## Top-level structure
+
+```yaml
+entry_point: first_node_id   # required — id of the node that runs first
+nodes:
+  - id: first_node_id
+    type: llm
+    ...
+  - id: end_node
+    type: END
+```
+
+---
+
+## Node Types
+
+### llm
+Calls an LLM with system + task prompts.
+Required: `id`, `type: llm`
+Optional: `system` (string), `task` (string), `llm_settings` (`{model_name, temperature, max_tokens}`),
+          `input_mapping` (dict), `output_mapping` (dict), `transition` (node_id string)
+Example:
+```yaml
+entry_point: generate_summary
+nodes:
+  - id: generate_summary
+    type: llm
+    system: "You are a helpful summariser."
+    task: "Summarise the following text: {state.input_text}"
+    llm_settings:
+      model_name: gpt-4o
+      temperature: 0.3
+    output_mapping:
+      summary: response
+    transition: print_result
+  - id: print_result
+    type: printer
+    final_message: "Summary: {state.summary}"
+    transition: end_node
+  - id: end_node
+    type: END
+```
+
+### code
+Executes Python in a Pyodide sandbox.
+Required: `id`, `type: code`, `code` (`{type: fixed|variable, value: <python string>}`)
+Optional: `input_mapping`, `output_mapping`, `structured_output` (bool), `transition`
+Example:
+```yaml
+- id: process_data
+  type: code
+  code:
+    type: fixed
+    value: |
+      items = elitea_state.get("items", [])
+      {"count": len(items), "first": items[0] if items else None}
+  output_mapping:
+    count: count
+  transition: end_node
+```
+
+### agent
+Calls another Elitea agent as a sub-agent.
+Required: `id`, `type: agent`, `name` (agent display name or tool name)
+Optional: `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: call_reviewer
+  type: agent
+  name: code_reviewer_agent
+  input_mapping:
+    code: state.code_snippet
+  transition: end_node
+```
+
+### toolkit
+Calls a toolkit tool.
+Required: `id`, `type: toolkit`, `name` (toolkit instance name)
+Optional: `tool_name` (specific tool in the toolkit), `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: fetch_jira
+  type: toolkit
+  name: my_jira_toolkit
+  tool_name: get_issue
+  input_mapping:
+    issue_key: state.issue_id
+  transition: end_node
+```
+
+### mcp
+Calls an MCP server tool.
+Required: `id`, `type: mcp`, `name` (MCP server name)
+Optional: `tool_name`, `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: search_web
+  type: mcp
+  name: brave_search
+  tool_name: web_search
+  input_mapping:
+    query: state.search_query
+  transition: end_node
+```
+
+### router
+Routes based on Jinja2 conditions evaluated against state.
+The router node does NOT use `transition`. Instead it uses `routes` (list of node_ids) and
+`default_output` (a single node_id fallback).
+Required: `id`, `type: router`
+Optional: `routes` (list of target node_id strings), `default_output` (node_id string)
+
+The Jinja2 condition template is stored in `template` and must output exactly one of the node_ids
+listed in `routes`, or fall through to `default_output`.
+Example:
+```yaml
+- id: check_approval
+  type: router
+  template: |
+    {% if state.approved == true %}
+    process_approved
+    {% else %}
+    process_rejected
+    {% endif %}
+  routes:
+    - process_approved
+    - process_rejected
+  default_output: process_rejected
+```
+
+### decision
+AI-powered routing: an LLM decides the next step.
+The decision node does NOT use `transition`. Instead it uses `nodes` (list of target node_ids) and
+`default_output` (a single node_id fallback).
+Required: `id`, `type: decision`
+Optional: `description` (string guiding the LLM), `nodes` (list of node_id strings),
+          `default_output` (node_id string), `llm_settings`
+Example:
+```yaml
+- id: decide_next
+  type: decision
+  description: "Route based on sentiment of user_message"
+  nodes:
+    - handle_positive
+    - handle_negative
+  default_output: handle_neutral
+```
+
+### state_modifier
+Transforms pipeline state using a Jinja2 template.
+Required: `id`, `type: state_modifier`
+Optional: `template` (Jinja2 string), `input_mapping`, `output_mapping`, `transition`
+Example:
+```yaml
+- id: format_output
+  type: state_modifier
+  template: "Summary: {{ state.summary }}\\nScore: {{ state.score }}"
+  output_mapping:
+    formatted: result
+  transition: end_node
+```
+
+### printer
+Outputs a final message to the user.
+Required: `id`, `type: printer`
+Optional: `input_mapping` (maps state keys to the output), `final_message` (string template), `transition`
+Example:
+```yaml
+- id: print_result
+  type: printer
+  final_message: "Here is your result: {state.summary}"
+  transition: end_node
+```
+
+### hitl
+Human-in-the-loop: pauses execution and asks the user a question.
+The hitl node does NOT use `transition`. Instead it uses `routes` (an object mapping action names
+to target node_ids).
+Required: `id`, `type: hitl`
+Optional: `user_message` (string prompt shown to user), `input_mapping`, `output_mapping`,
+          `routes` (object: `{<action>: <node_id>}`)
+Example:
+```yaml
+- id: ask_approval
+  type: hitl
+  user_message: "Please review and approve: {state.draft}"
+  output_mapping:
+    user_response: approval_input
+  routes:
+    approve: send_response
+    reject: generate_draft
+```
+
+### custom
+A flexible node whose actual execution type is set at runtime.
+Required: `id`, `type: custom`
+Optional: Any fields valid for the underlying execution type; `transition`
+
+### END
+Terminates the pipeline. The type value is the uppercase string `END`.
+Required: `id`, `type: END`
+No additional fields needed.
+Example:
+```yaml
+- id: end_node
+  type: END
+```
+
+---
+
+## Wiring Patterns
+
+### Pattern 1: Sequential chain
+```yaml
+entry_point: step_one
+nodes:
+  - id: step_one
+    type: llm
+    system: "You are a planner."
+    task: "{state.user_input}"
+    transition: step_two
+  - id: step_two
+    type: printer
+    final_message: "Plan: {state.response}"
+    transition: end_node
+  - id: end_node
+    type: END
+```
+
+### Pattern 2: Branching router
+```yaml
+entry_point: classify
+nodes:
+  - id: classify
+    type: llm
+    system: "Classify the intent."
+    task: "{state.message}"
+    transition: route_intent
+  - id: route_intent
+    type: router
+    template: |
+      {% if state.response == 'question' %}
+      answer_question
+      {% elif state.response == 'task' %}
+      execute_task
+      {% else %}
+      answer_question
+      {% endif %}
+    routes:
+      - answer_question
+      - execute_task
+    default_output: answer_question
+  - id: answer_question
+    type: llm
+    system: "Answer concisely."
+    task: "{state.message}"
+    transition: end_node
+  - id: execute_task
+    type: toolkit
+    name: my_toolkit
+    transition: end_node
+  - id: end_node
+    type: END
+```
+
+### Pattern 3: Agent calls toolkit
+```yaml
+entry_point: fetch_data
+nodes:
+  - id: fetch_data
+    type: toolkit
+    name: github_toolkit
+    tool_name: get_pull_request
+    input_mapping:
+      pr_number: state.pr_id
+    transition: review
+  - id: review
+    type: agent
+    name: code_review_agent
+    input_mapping:
+      code: state.pr_diff
+    transition: end_node
+  - id: end_node
+    type: END
+```
+
+### Pattern 4: HITL approval gate
+```yaml
+entry_point: generate_draft
+nodes:
+  - id: generate_draft
+    type: llm
+    system: "Draft a response."
+    task: "{state.request}"
+    transition: approve
+  - id: approve
+    type: hitl
+    user_message: "Please approve or reject this draft: {state.response}"
+    output_mapping:
+      user_response: decision
+    routes:
+      approve: send_response
+      reject: generate_draft
+  - id: send_response
+    type: printer
+    final_message: "Approved: {state.response}"
+    transition: end_node
+  - id: end_node
+    type: END
+```
+
+---
+
+## Rules Summary
+- `entry_point` is a top-level key equal to the id of the first node. Never put `entrypoint: true`
+  on a node — that field is not read by the pipeline engine.
+- Every pipeline needs at least one node with `type: END` reachable from the entry_point.
+- The end node type is the uppercase string `END` (not `end`).
+- Simple (non-branching) nodes connect to the next step via `transition: <node_id>` (a scalar
+  string on the node). Do NOT use a `transitions:` list.
+- Router nodes use `routes: [node_id, ...]` and `default_output: node_id` for branching.
+  Do NOT put `transition` on a router node.
+- Decision nodes use `nodes: [node_id, ...]` and `default_output: node_id` for branching.
+  Do NOT put `transition` on a decision node.
+- HITL nodes use `routes: {action: node_id}` (an object) for branching.
+  Do NOT put `transition` on a hitl node.
+- `agent`, `toolkit`, and `mcp` nodes require a non-empty `name` field.
+- `code` nodes require a non-empty `code` field.
+- Only suggest resources (agents, toolkits, MCPs) from the provided resource list.
+- Keep node ids short, lowercase, and descriptive (e.g. `generate_summary`, `check_approval`).
+"""
+
+_GENERATE_PIPELINE_DRAFT_V2 = """You are an expert pipeline architect for the Elitea AI platform.
+Given a natural-language description, produce a complete, runnable pipeline as valid YAML.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Available Resources
+Use ONLY the toolkits, MCP servers, agents, pipelines, and skills listed below.
+Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name, 1–32 characters
+- description: one-sentence description of what the pipeline does
+- pipeline_yaml: the complete YAML string for the pipeline (nodes list)
+- suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
+- suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
+- suggested_agents: list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{id, name}} for skills referenced
+
+## Rules
+- The pipeline YAML must have a top-level `entry_point` key (string, equal to the first node's id)
+  and a top-level `nodes` list. Never put `entrypoint: true` on a node — it is not read.
+- Every pipeline must have at least one node with `type: END` reachable from the entry_point.
+- The end node type is the uppercase string `END` (not `end`).
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids.
+- agent/toolkit/mcp nodes must have a non-empty `name` field.
+- code nodes must have a non-empty `code.value` field.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+_EDIT_PIPELINE_DRAFT_V2 = """You are an expert pipeline architect for the Elitea AI platform.
+Given an existing pipeline configuration and a change instruction, produce the modified pipeline.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Current Pipeline Configuration
+{current_config}
+
+## Available Resources
+Use ONLY the resources listed below. Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name (keep existing unless the instruction changes it), 1–32 characters
+- description: updated description
+- pipeline_yaml: the complete modified YAML string for the pipeline
+- suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
+- suggested_mcp: full list of {{id, type, name}} for MCP servers used
+- suggested_agents: full list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{id, name}} for skills referenced
+
+## Rules
+- Apply ONLY the requested changes; keep all other nodes and transitions intact.
+- The modified pipeline YAML must still have a top-level `entry_point` key and at least one
+  reachable node with `type: END`.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids.
+- Return the COMPLETE pipeline_yaml, not just the changed portion.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+# Intermediate broken versions: same as V2 defaults but with unescaped {action: node_id}.
+# These ended up in the DB after the first migration run (before the brace-escaping fix).
+_GENERATE_PIPELINE_DRAFT_V2_BROKEN_BRACES = _GENERATE_PIPELINE_DRAFT_V2.replace(
+    "{{action: node_id}}", "{action: node_id}"
+)
+_EDIT_PIPELINE_DRAFT_V2_BROKEN_BRACES = _EDIT_PIPELINE_DRAFT_V2.replace(
+    "{{action: node_id}}", "{action: node_id}"
+)
+
+_GENERATE_PIPELINE_DRAFT_V3 = """You are an expert pipeline architect for the Elitea AI platform.
+Given a natural-language description, produce a complete, runnable pipeline as valid YAML.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Available Resources
+Use ONLY the toolkits, MCP servers, agents, pipelines, and skills listed below.
+Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name, 1–32 characters
+- description: one-sentence description of what the pipeline does
+- pipeline_yaml: the complete YAML string for the pipeline (nodes list)
+- suggested_toolkits: list of {{id, type, name}} for toolkits the pipeline uses
+- suggested_mcp: list of {{id, type, name}} for MCP servers the pipeline uses
+- suggested_agents: list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: list of {{application_id, name, type: "pipeline"}} for sub-pipelines used
+- suggested_skills: list of {{id, name}} for skills referenced
+
+## Rules
+- The pipeline YAML must have a top-level `entry_point` key (string, equal to the first node's id)
+  and a top-level `nodes` list. Never put `entrypoint: true` on a node — it is not read.
+- `END` is a reserved transition sentinel. Set `transition: END` on the last node of each path.
+  Do NOT add a separate node with `type: END` to the nodes list.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- agent/toolkit/mcp nodes must have a non-empty `name` field.
+- code nodes must have a non-empty `code.value` field.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+_EDIT_PIPELINE_DRAFT_V3 = """You are an expert pipeline architect for the Elitea AI platform.
+Given an existing pipeline configuration and a change instruction, produce the modified pipeline.
+
+## Reference
+Use the Pipeline Authoring Reference provided in the context for node types, required fields,
+transition syntax, and wiring patterns.
+
+## Current Pipeline Configuration
+{current_config}
+
+## Available Resources
+Use ONLY the resources listed below. Do not invent resource names.
+
+Toolkits:
+{toolkits}
+
+MCP servers:
+{mcp}
+
+Agents:
+{agents}
+
+Pipelines:
+{pipelines}
+
+Skills:
+{skills}
+
+## Output Format
+Return a single JSON object (no markdown fences, no prose) with these keys:
+- name: pipeline name (keep existing unless the instruction changes it), 1–32 characters
+- description: updated description
+- pipeline_yaml: the complete modified YAML string for the pipeline
+- suggested_toolkits: full list of {{id, type, name}} for toolkits the modified pipeline uses
+- suggested_mcp: full list of {{id, type, name}} for MCP servers used
+- suggested_agents: full list of {{application_id, name, type: "agent"}} for sub-agents used
+- suggested_pipelines: full list of {{application_id, name, type: "pipeline"}} for sub-pipelines
+- suggested_skills: full list of {{id, name}} for skills referenced
+
+## Rules
+- Apply ONLY the requested changes; keep all other nodes and transitions intact.
+- The modified pipeline YAML must still have a top-level `entry_point` key and every terminal
+  path must end with `transition: END`. Do NOT add a separate node with `type: END`.
+- Simple (non-branching) nodes connect via `transition: <node_id>` (scalar string on the node).
+  Do NOT use a `transitions:` list.
+- Router nodes branch via `routes: [node_id, ...]` and `default_output: node_id`.
+- Decision nodes branch via `nodes: [node_id, ...]` and `default_output: node_id`.
+- HITL nodes branch via `routes: {{action: node_id}}` (an object).
+- All transition targets must reference existing node ids (except the reserved sentinel `END`).
+- Return the COMPLETE pipeline_yaml, not just the changed portion.
+- Return ONLY the JSON object, no explanations, no code fences."""
+
+PIPELINE_PROMPT_PAST_DEFAULTS: dict[str, tuple[str, ...]] = {
+    "pipeline_authoring_reference": (
+        PIPELINE_AUTHORING_REFERENCE_DEFAULT_PROMPT_V1,
+        _PIPELINE_AUTHORING_REFERENCE_V2,
+    ),
+    "generate_pipeline_draft": (
+        GENERATE_PIPELINE_DRAFT_DEFAULT_PROMPT_V1,
+        _GENERATE_PIPELINE_DRAFT_V2,
+        _GENERATE_PIPELINE_DRAFT_V2_BROKEN_BRACES,
+        _GENERATE_PIPELINE_DRAFT_V3,
+    ),
+    "edit_pipeline_draft": (
+        EDIT_PIPELINE_DRAFT_DEFAULT_PROMPT_V1,
+        _EDIT_PIPELINE_DRAFT_V2,
+        _EDIT_PIPELINE_DRAFT_V2_BROKEN_BRACES,
+        _EDIT_PIPELINE_DRAFT_V3,
+    ),
 }
