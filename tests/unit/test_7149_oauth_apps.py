@@ -614,6 +614,38 @@ def test_private_credential_listed_from_a_team_project_uses_its_own_project(modu
     assert item['data']['client_id'] == 'cid'
 
 
+# ms_graph: a 4th Entra credential type, opt-in per app, with free-text Graph scopes
+
+def test_unset_credential_types_do_not_serve_opt_in_ms_graph(modules):
+    assert modules.apps.unavailable_reason(APP, 5, 'ms_graph') is not None
+    assert modules.apps.unavailable_reason({**APP, 'credential_types': ['ms_graph']}, 5, 'ms_graph') is None
+    assert not modules.apps.serves(APP, 'ms_graph')
+    assert modules.apps.serves({**APP, 'credential_types': ['ms_graph']}, 'ms_graph')
+
+
+def test_admin_view_shows_the_effective_credential_types(modules):
+    view = modules.apps.admin_view({'data': APP, 'label': 'Contoso', 'uuid': 'u', 'id': 1})
+    assert view['credential_types'] == ['teams', 'outlook', 'sharepoint']
+    view = modules.apps.admin_view({'data': {**APP, 'credential_types': ['ms_graph']}, 'label': 'C', 'uuid': 'u', 'id': 1})
+    assert view['credential_types'] == ['ms_graph']
+
+
+def test_ms_graph_scopes_are_free_text_graph_permissions(modules):
+    data = modules.apps.validated_app_data(
+        {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': ['ms_graph'],
+         'scopes': {'ms_graph': ['https://graph.microsoft.com/Mail.Read', 'Files.ReadWrite.All', 'mail.read',
+                                 'offline_access']}})
+    assert data['scopes'] == {'ms_graph': ['Mail.Read', 'Files.ReadWrite.All']}
+
+
+@pytest.mark.parametrize('scopes', [['https://contoso.sharepoint.com/AllSites.Read'], ['Mail'],
+                                    ['https://graph.microsoft.com/.default', 'Mail.Read']])
+def test_ms_graph_scopes_reject_other_resources(modules, scopes):
+    with pytest.raises(modules.error):
+        modules.apps.validated_app_data(
+            {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], 'credential_types': ['ms_graph'],
+             'scopes': {'ms_graph': scopes}})
+
 @pytest.mark.parametrize('stored, expected', [(False, False), (True, True), ('missing', True)])
 def test_proxy_client_carries_the_app_auto_refresh_switch(modules, monkeypatch, stored, expected):
     """#7415: the proxy asks for offline_access only while the admin app's Auto refresh is on."""
