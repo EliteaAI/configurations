@@ -96,6 +96,19 @@ def can_manage_tracing(project_id: int, user_id: int | None) -> bool:
     return is_project_admin(project_id, user_id) or is_own_personal_project(project_id, user_id)
 
 
+PROJECT_SETTINGS_SECTION = 'project_settings'
+
+
+def is_project_settings_type(config_type: str | None) -> bool:
+    entry = CONFIG_TYPE_REGISTRY.get(config_type) if config_type else None
+    return bool(entry) and entry.section == PROJECT_SETTINGS_SECTION
+
+
+def can_manage_project_settings(project_id: int, user_id: int | None) -> bool:
+    # Same rule as tracing (#6789): team-project settings are admin-only, the owner keeps their own project
+    return can_manage_tracing(project_id, user_id)
+
+
 def hidden_tracing_types(project_id: int, user_id: int | None) -> set[str]:
     if can_manage_tracing(project_id, user_id):
         return set()
