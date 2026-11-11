@@ -615,6 +615,8 @@ class Method:  # pylint: disable=E1101,R0903,W0201
 
         Overwrites each row ONLY if its text matches a known past default byte-for-byte after
         stripping. Hand-edited prompts are left untouched and reported under skipped_custom.
+        A hand-edited `generate_schedule_draft` without the `{toolkit_indexes}` slot also gets a
+        warning in the log, because its AI schedule drafts offer no toolkit indexes.
 
         Idempotent: rows already on the current default are reported under up_to_date.
 
@@ -665,6 +667,13 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                             prefix, cfg.id, key,
                         )
                         result["skipped_custom"].append(key)
+                        if key == "generate_schedule_draft" and "{toolkit_indexes}" not in current_prompt:
+                            log.warning(
+                                "%smigrate_service_prompt_pipeline_authoring: configuration id=%s (%s) "
+                                "has no {toolkit_indexes} slot, so AI schedule drafts offer no toolkit "
+                                "indexes until an admin adds the slot and the index_name field by hand.",
+                                prefix, cfg.id, key,
+                            )
                         continue
 
                     result["migrated"].append(key)
