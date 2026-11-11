@@ -1,6 +1,8 @@
 """The generate_schedule_draft service prompt: key, default text, empty-text rejection, and a default
-prompt that fills with six runtime values and asks for twelve fields (US-20, R1.3, R1.6, R2.1-R2.5)."""
+prompt that fills with seven runtime values and asks for thirteen fields,
+and the frozen earlier default that the upgrade task recognises."""
 
+import hashlib
 import importlib.util
 import json
 import pathlib
@@ -17,6 +19,7 @@ PKG = "cfg_schedule_draft_prompt_test"
 SLOTS = {
     "agents": '[{"name": "SupportBot", "versions": ["v1", "v2"]}, {"name": "KnowledgeBot", "versions": ["v1"]}]',
     "pipelines": '[{"name": "ETLPipeline", "versions": ["prod", "staging"]}, {"name": "DataValidation", "versions": ["v3"]}]',
+    "toolkit_indexes": '[{"toolkit": "Confluence", "indexes": ["wiki", "docs"]}, {"toolkit": "Jira", "indexes": ["tickets"]}]',
     "current_values": '{"description": "Weekly data check"}',
     "locked_entity": "agent SupportBot",
     "timezone": "Europe/Berlin",
@@ -26,15 +29,22 @@ SLOTS = {
 SLOTS_WITHOUT_TODAY = {
     "agents": '[{"name": "SupportBot", "versions": ["v1"]}]',
     "pipelines": '[{"name": "ETLPipeline", "versions": ["prod"]}]',
+    "toolkit_indexes": '[]',
     "current_values": '{}',
     "locked_entity": "none",
     "timezone": "UTC",
 }
 
+PAST_DEFAULT_SHA256 = "cbb77f23f1356f493756422c95bce39a65e81551deae23807404f73bbba27fec"
+
+PAST_SLOTS = {"agents", "pipelines", "current_values", "locked_entity", "timezone", "today"}
+
 TWELVE_FIELDS = {
     "name", "description", "entity_type", "entity_name", "version_name",
     "run_mode", "prompt", "variables", "cron", "timezone", "expires_at", "approval_rule"
 }
+
+THIRTEEN_FIELDS = TWELVE_FIELDS | {"index_name"}
 
 
 @pytest.fixture(scope="module")
@@ -97,8 +107,8 @@ def test_empty_text_is_rejected(mods):
         mods.model(key="generate_schedule_draft", prompt="")
 
 
-def test_template_has_exactly_the_six_slots(prompt):
-    """R2.1, TC-US20-10, TC-US20-12: the text has the six slots and no other."""
+def test_template_has_exactly_the_seven_slots(prompt):
+    """The text has the seven slots and no other."""
     slots = {field for _, field, _, _ in string.Formatter().parse(prompt) if field}
     assert slots == set(SLOTS)
 
@@ -121,10 +131,10 @@ def test_braces_in_a_value_stay_as_typed(prompt):
     assert value in prompt.format(**{**SLOTS, "current_values": value})
 
 
-def test_json_example_has_exactly_twelve_fields(filled):
-    """R2.2, TC-US20-10, TC-US20-15: the JSON example in the text has the twelve draft keys."""
-    block = filled.split("twelve fields:\n", 1)[1].split("\n\nRules:", 1)[0]
-    assert set(json.loads(block)) == TWELVE_FIELDS
+def test_json_example_has_exactly_thirteen_fields(filled):
+    """The JSON example in the text has the thirteen draft keys."""
+    block = filled.split("thirteen fields:\n", 1)[1].split("\n\nRules:", 1)[0]
+    assert set(json.loads(block)) == THIRTEEN_FIELDS
 
 
 @pytest.mark.parametrize("req, tc, rule", [
@@ -141,3 +151,40 @@ def test_json_example_has_exactly_twelve_fields(filled):
 def test_filled_text_states_rule(filled, req, tc, rule):
     """R2.2-R2.5, TC-US20-13, TC-US20-14: the filled text carries the exact rule sentence."""
     assert rule in filled
+
+
+@pytest.mark.parametrize("rule", [
+    "Toolkit indexes the user can schedule, as toolkit and index pairs:",
+    '"entity_type": "agent, pipeline or toolkit_index"',
+    '"index_name": "exact index name of that toolkit for toolkit_index, otherwise null"',
+    "- Pick entity_name, version_name and index_name only from the lists above. Never invent a name.",
+    "- For toolkit_index, entity_name is the toolkit name and index_name is one index of that toolkit,",
+    '- For toolkit_index, run_mode and prompt are null, variables is {} and approval_rule is',
+    "- A toolkit index schedule runs at most once a day.",
+    "- index_name is null for an agent and for a pipeline.",
+])
+def test_filled_text_states_toolkit_index_rule(filled, rule):
+    """The filled text lists the toolkit indexes and carries the toolkit index rules."""
+    assert rule in filled
+
+
+def test_toolkit_indexes_value_is_filled(filled):
+    """The toolkit and index pairs land in the block under their heading."""
+    heading = "Toolkit indexes the user can schedule, as toolkit and index pairs:\n"
+    assert filled.split(heading, 1)[1].startswith(SLOTS["toolkit_indexes"])
+
+
+def test_earlier_default_is_frozen_and_registered(mods, prompt):
+    """The earlier default keeps its exact text and the upgrade registry lists it for the key."""
+    past = mods.defaults.GENERATE_SCHEDULE_DRAFT_DEFAULT_PROMPT_V1
+    assert hashlib.sha256(past.encode()).hexdigest() == PAST_DEFAULT_SHA256
+    assert mods.defaults.PIPELINE_PROMPT_PAST_DEFAULTS["generate_schedule_draft"] == (past,)
+    assert past.strip() != prompt.strip()
+
+
+def test_earlier_default_has_six_slots_and_twelve_fields(mods):
+    """The frozen text is the one that was seeded: no toolkit index slot, twelve fields."""
+    past = mods.defaults.GENERATE_SCHEDULE_DRAFT_DEFAULT_PROMPT_V1
+    slots = {field for _, field, _, _ in string.Formatter().parse(past) if field}
+    assert slots == PAST_SLOTS
+    assert "twelve fields:" in past
