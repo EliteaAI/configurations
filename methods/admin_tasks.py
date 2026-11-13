@@ -704,14 +704,15 @@ class Method:  # pylint: disable=E1101,R0903,W0201
     @web.method()
     def migrate_service_prompt_application_draft(self, *args, **kwargs):
         """Upgrade the 'generate_application_draft' and 'edit_application_draft' service prompts
-        to the current defaults, which take the Chat Starters limit from the
-        {max_conversation_starters} placeholder instead of a hardcoded 4.
+        to the current defaults, which take the Chat Starters and agent skill limits from the
+        {max_conversation_starters} and {max_skills_per_agent} placeholders instead of a hardcoded
+        4 and 5.
         Param: [dry_run]
 
         ``ensure_default_service_prompts`` never updates existing rows, so this task overwrites a
         row's prompt ONLY if it still matches one of APPLICATION_DRAFT_PAST_DEFAULTS after
         stripping. A hand-edited prompt is left untouched and reported under ``skipped_custom``;
-        it keeps working, but keeps asking for its own number of starters.
+        it keeps working, but keeps asking for its own number of starters and skills.
 
         Idempotent: rows already on the current default are reported under ``up_to_date``.
 
@@ -758,7 +759,8 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                         log.warning(
                             "%smigrate_service_prompt_application_draft: configuration id=%s (%s) does "
                             "not match any known past default — assuming it was customized; leaving it "
-                            "untouched. Add {max_conversation_starters} to it by hand if you want it.",
+                            "untouched. Add {max_conversation_starters} and {max_skills_per_agent} to it by hand "
+                            "if you want them.",
                             prefix, cfg.id, key,
                         )
                         result["skipped_custom"].append(key)
