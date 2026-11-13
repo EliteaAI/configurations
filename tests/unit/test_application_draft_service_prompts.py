@@ -1,5 +1,5 @@
-"""The application draft prompts take the Chat Starters limit from a placeholder, and the migration
-moves seeded rows off the past defaults without touching customized ones."""
+"""The application draft prompts take the Chat Starters and agent skill limits from placeholders, and the
+migration moves seeded rows off the past defaults without touching customized ones."""
 
 import importlib
 import importlib.util
@@ -41,12 +41,12 @@ def _slots(prompt):
 
 def test_generate_prompt_slots(defaults):
     prompt = defaults.SERVICE_PROMPT_DEFAULTS['generate_application_draft']
-    assert _slots(prompt) == RESOURCE_SLOTS | {'max_conversation_starters'}
+    assert _slots(prompt) == RESOURCE_SLOTS | {'max_conversation_starters', 'max_skills_per_agent'}
 
 
 def test_edit_prompt_slots(defaults):
     prompt = defaults.SERVICE_PROMPT_DEFAULTS['edit_application_draft']
-    assert _slots(prompt) == RESOURCE_SLOTS | {'max_conversation_starters', 'current_config'}
+    assert _slots(prompt) == RESOURCE_SLOTS | {'max_conversation_starters', 'max_skills_per_agent', 'current_config'}
 
 
 @pytest.mark.parametrize('key', KEYS)
@@ -56,22 +56,48 @@ def test_no_hardcoded_starters_limit_remains(defaults, key):
 
 
 @pytest.mark.parametrize('key', KEYS)
+def test_no_hardcoded_skills_limit_remains(defaults, key):
+    prompt = defaults.SERVICE_PROMPT_DEFAULTS[key]
+    assert 'max 5' not in prompt and 'Maximum 5' not in prompt
+
+
+@pytest.mark.parametrize('key', KEYS)
 def test_prompt_renders_the_configured_limit(defaults, key):
     values = {slot: '' for slot in RESOURCE_SLOTS}
-    values.update(current_config='{}', max_conversation_starters=7)
+    values.update(current_config='{}', max_conversation_starters=7, max_skills_per_agent=37)
     rendered = defaults.SERVICE_PROMPT_DEFAULTS[key].format(**values)
     assert 'max 7 items' in rendered and '{max_conversation_starters}' not in rendered
+    assert ('Maximum 37 skills.' in rendered or '(max 37)' in rendered) and '{max_skills_per_agent}' not in rendered
 
 
 def test_past_defaults_are_frozen_and_differ_from_current(defaults):
     past = defaults.APPLICATION_DRAFT_PAST_DEFAULTS
     assert set(past) == set(KEYS)
-    assert len(past['generate_application_draft']) == 5
-    assert len(past['edit_application_draft']) == 3
+    assert len(past['generate_application_draft']) == 6
+    assert len(past['edit_application_draft']) == 4
     for key, prompts in past.items():
         assert len(set(prompts)) == len(prompts)
         assert defaults.SERVICE_PROMPT_DEFAULTS[key].strip() not in {p.strip() for p in prompts}
-        assert all('{max_conversation_starters}' not in p for p in prompts)
+        assert all('{max_skills_per_agent}' not in p for p in prompts)
+
+
+@pytest.mark.parametrize('key', KEYS)
+def test_latest_past_default_differs_only_by_the_skills_limit_and_shape(defaults, key):
+    latest = defaults.APPLICATION_DRAFT_PAST_DEFAULTS[key][-1]
+    current = defaults.SERVICE_PROMPT_DEFAULTS[key]
+    skill_entry = '"id": <int>, "name": "<str>"}}'
+    assert current.count(skill_entry) == 1
+    previous = current.replace('{max_skills_per_agent}', '5').replace(
+        skill_entry, '"id": <int>, "name": "<str>", "description": "<str or null>"}}')
+    assert previous == latest
+
+
+@pytest.mark.parametrize('key', KEYS)
+def test_suggested_skills_shape_omits_the_description(defaults, key):
+    prompt = defaults.SERVICE_PROMPT_DEFAULTS[key]
+    skills_entry = prompt[prompt.index('"suggested_skills": ['):]
+    skills_entry = skills_entry[:skills_entry.index(']') + 1]
+    assert 'description' not in skills_entry and '"id": <int>' in skills_entry
 
 
 # --- migration task ------------------------------------------------------------------------
