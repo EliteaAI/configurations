@@ -658,3 +658,84 @@ def test_proxy_client_carries_the_app_auto_refresh_switch(modules, monkeypatch, 
     monkeypatch.setattr(modules.apps, '_load_app', lambda app_id, fresh=False: modules.apps._public_apps()[0])
     assert modules.apps.resolve_app_client('uuid-Teams app', 5, 'teams')['auto_refresh_token'] is expected
 
+
+
+# #7327: scope lists, defaults and labels come from the credential schemas, not from code
+
+_SCHEMAS = {
+    'teams': {'metadata': {'label': 'Teams'}, 'properties': {'scopes': {
+        'default': ['Chat.Read'], 'description': 'Graph permissions',
+        'checkbox_options': [
+            {'value': 'Chat.Read', 'label': 'Chat.Read', 'description': 'chats'},
+            {'value': 'ChannelMessage.Read.All', 'label': 'ChannelMessage.Read.All', 'description': 'channels',
+             'admin_consent': True},
+        ]}}},
+    'sharepoint': {'metadata': {'label': 'SharePoint'}, 'properties': {'scopes': {
+        'default': ['Sites.ReadWrite.All'],
+        'checkbox_options': [{'value': 'Sites.ReadWrite.All', 'label': 'Sites.ReadWrite.All', 'description': 's'}]}}},
+    'ms_graph': {'metadata': {'label': 'Microsoft Graph'}, 'properties': {'scopes': {'default': ['User.Read']}}},
+}
+
+
+@pytest.fixture
+def schemas(modules, monkeypatch):
+    monkeypatch.setattr(modules.apps, '_credential_schema', lambda credential_type: _SCHEMAS.get(credential_type, {}))
+    return modules
+
+
+def _app_values(**overrides):
+    return {'client_id': 'c', 'client_secret': 's', 'allowed_project_ids': [7], **overrides}
+
+
+def test_catalog_is_read_from_the_credential_schemas(schemas):
+    (provider,) = schemas.apps.oauth_provider_catalog()
+    assert provider['id'] == 'microsoft_entra'
+    assert provider['default_discovery_endpoint'] == 'https://login.microsoftonline.com/organizations'
+    types = {item['type']: item for item in provider['credential_types']}
+    assert list(types) == ['teams', 'outlook', 'sharepoint', 'ms_graph']
+    assert types['teams']['label'] == 'Teams'
+    assert types['teams']['default_scopes'] == ['Chat.Read']
+    assert types['teams']['options'][1]['admin_consent'] is True
+    assert types['ms_graph']['options'] is None            # no list in the schema: free text
+    assert types['ms_graph']['opt_in'] is True and types['teams']['opt_in'] is False
+    assert types['outlook'] == {'type': 'outlook', 'label': 'outlook', 'options': None, 'default_scopes': [],
+                                'description': '', 'opt_in': False}   # not registered
+
+
+def test_recommended_scopes_are_the_schema_default(schemas):
+    assert schemas.apps.recommended_scopes('sharepoint') == ['Sites.ReadWrite.All']
+    assert schemas.apps.recommended_scopes(None) == []
+
+
+def test_a_served_type_with_a_scope_list_needs_one_scope(schemas):
+    with pytest.raises(schemas.error, match='Select at least one SharePoint scope, or switch SharePoint off'):
+        schemas.apps.validated_app_data(_app_values(credential_types=['sharepoint'], scopes={}))
+
+
+def test_a_switched_off_type_keeps_its_scopes_unchecked(schemas):
+    data = schemas.apps.validated_app_data(_app_values(
+        credential_types=['teams'], scopes={'teams': ['Chat.Read'], 'sharepoint': ['Legacy.Scope']}))
+    assert data['scopes'] == {'teams': ['Chat.Read'], 'sharepoint': ['Legacy.Scope']}
+
+
+def test_scopes_not_offered_by_the_schema_are_rejected(schemas):
+    with pytest.raises(schemas.error, match='Teams credentials do not offer: Mail.Read'):
+        schemas.apps.validated_app_data(_app_values(credential_types=['teams'], scopes={'teams': ['Mail.Read']}))
+
+
+def test_admin_consent_options_can_be_saved(schemas):
+    data = schemas.apps.validated_app_data(_app_values(
+        credential_types=['teams'], scopes={'teams': ['Chat.Read', 'ChannelMessage.Read.All']}))
+    assert data['scopes']['teams'] == ['Chat.Read', 'ChannelMessage.Read.All']
+
+
+def test_unset_credential_types_check_the_default_types(schemas):
+    # Apps saved without a type list serve the provider's default types, SharePoint included
+    with pytest.raises(schemas.error, match='SharePoint'):
+        schemas.apps.validated_app_data(_app_values(scopes={'teams': ['Chat.Read']}))
+
+
+def test_free_text_types_are_cleaned_by_the_provider(schemas):
+    data = schemas.apps.validated_app_data(_app_values(
+        credential_types=['ms_graph'], scopes={'ms_graph': ['https://graph.microsoft.com/Mail.Read', 'openid']}))
+    assert data['scopes'] == {'ms_graph': ['Mail.Read']}

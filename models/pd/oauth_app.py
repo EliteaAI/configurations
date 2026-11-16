@@ -7,7 +7,7 @@ Custom app modes are reused unchanged.
 """
 import re
 from dataclasses import dataclass
-from typing import Literal
+from typing import Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, field_validator, model_validator
 from urllib.parse import urlparse
@@ -17,46 +17,6 @@ OAUTH_APP_SECTION = 'oauth_apps'
 MICROSOFT_ENTRA = 'microsoft_entra'
 
 ProviderId = Literal['microsoft_entra']
-
-
-@dataclass(frozen=True)
-class OAuthProvider:
-    label: str
-    # Credential types that can reference an app of this provider instead of carrying their own client
-    credential_types: tuple[str, ...]
-    # The app's client secret is posted only to these hosts
-    hosts: frozenset[str]
-    default_discovery_endpoint: str
-    discovery_endpoint_hint: str
-    token_path: str
-    # Types an app serves when its credential_types is unset (apps saved before a type was added);
-    # a type left out is opt-in: the admin switches it on per app. Empty means every type.
-    default_credential_types: tuple[str, ...] = ()
-    # Types whose scopes are free text, checked only to be the provider's own permissions
-    free_scope_types: tuple[str, ...] = ()
-
-
-OAUTH_PROVIDERS: dict[str, OAuthProvider] = {
-    MICROSOFT_ENTRA: OAuthProvider(
-        label='Microsoft Entra ID',
-        credential_types=('teams', 'outlook', 'sharepoint', 'ms_graph'),
-        hosts=frozenset({'login.microsoftonline.com'}),
-        default_discovery_endpoint='https://login.microsoftonline.com/organizations',
-        discovery_endpoint_hint='https://login.microsoftonline.com/<tenant_id or organizations>',
-        token_path='/oauth2/v2.0/token',
-        # Microsoft Graph (low-level, any endpoint) is switched on per app by the admin
-        default_credential_types=('teams', 'outlook', 'sharepoint'),
-        free_scope_types=('ms_graph',),
-    ),
-}
-
-# Credential type -> provider of the apps it may reference
-CREDENTIAL_PROVIDERS = {
-    credential_type: provider_id
-    for provider_id, provider in OAUTH_PROVIDERS.items()
-    for credential_type in provider.credential_types
-}
-OAUTH_APP_TOOLKIT_TYPES = tuple(CREDENTIAL_PROVIDERS)
 
 
 GRAPH_RESOURCE_PREFIX = 'https://graph.microsoft.com/'
@@ -85,6 +45,46 @@ def normalize_graph_scopes(scopes: list[str]) -> list[str]:
     if GRAPH_DEFAULT_SCOPE in result and len(result) > 1:
         raise ValueError(f'{GRAPH_DEFAULT_SCOPE} cannot be combined with other permissions')
     return result
+
+
+@dataclass(frozen=True)
+class OAuthProvider:
+    label: str
+    # Credential types that can reference an app of this provider instead of carrying their own client
+    credential_types: tuple[str, ...]
+    # The app's client secret is posted only to these hosts
+    hosts: frozenset[str]
+    default_discovery_endpoint: str
+    discovery_endpoint_hint: str
+    token_path: str
+    # Types an app serves when its credential_types is unset (apps saved before a type was added);
+    # a type left out is opt-in: the admin switches it on per app. Empty means every type.
+    default_credential_types: tuple[str, ...] = ()
+    # Cleans free-text scopes (a credential type whose schema offers no scope list); None keeps them as typed
+    normalize_free_scopes: Callable[[list[str]], list[str]] | None = None
+
+
+OAUTH_PROVIDERS: dict[str, OAuthProvider] = {
+    MICROSOFT_ENTRA: OAuthProvider(
+        label='Microsoft Entra ID',
+        credential_types=('teams', 'outlook', 'sharepoint', 'ms_graph'),
+        hosts=frozenset({'login.microsoftonline.com'}),
+        default_discovery_endpoint='https://login.microsoftonline.com/organizations',
+        discovery_endpoint_hint='https://login.microsoftonline.com/<tenant_id or organizations>',
+        token_path='/oauth2/v2.0/token',
+        # Microsoft Graph (low-level, any endpoint) is switched on per app by the admin
+        default_credential_types=('teams', 'outlook', 'sharepoint'),
+        normalize_free_scopes=normalize_graph_scopes,
+    ),
+}
+
+# Credential type -> provider of the apps it may reference
+CREDENTIAL_PROVIDERS = {
+    credential_type: provider_id
+    for provider_id, provider in OAUTH_PROVIDERS.items()
+    for credential_type in provider.credential_types
+}
+OAUTH_APP_TOOLKIT_TYPES = tuple(CREDENTIAL_PROVIDERS)
 
 
 def provider_of(data: dict | None) -> OAuthProvider:
@@ -172,9 +172,6 @@ class OAuthApp(BaseModel):
         unknown = set(self.scopes) - set(provider.credential_types)
         if unknown:
             raise ValueError(f"{provider.label} apps have no scopes for: {', '.join(sorted(unknown))}")
-        for credential_type in provider.free_scope_types:
-            if credential_type in self.scopes:
-                self.scopes[credential_type] = normalize_graph_scopes(self.scopes[credential_type])
         self.scopes = {key: scopes for key, scopes in self.scopes.items() if scopes}
         if self.credential_types is not None:
             types = list(dict.fromkeys(self.credential_types))
