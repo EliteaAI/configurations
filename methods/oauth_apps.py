@@ -4,8 +4,8 @@ from pylon.core.tools import web
 from ..common_utils import get_public_project_id
 from ..oauth_apps import (
     invalidate_apps_cache,
-    SEED_TITLE, _load_app, admin_view, check_app_connection, list_admin_apps, purge_replaced_secret,
-    validated_app_data,
+    SEED_TITLE, _load_app, admin_view, check_app_connection, list_admin_apps, oauth_provider_catalog,
+    purge_replaced_secret, validated_app_data,
 )
 from ..exceptions import ConfigurationError
 from ..local_tools import VaultClient, purge_secrets
@@ -72,6 +72,12 @@ class Method:
     def oauth_apps_admin_list(self):
         _require_admin()
         return list_admin_apps()
+
+    @web.method()
+    def oauth_apps_admin_providers(self):
+        """Providers and, per credential type, the scopes the credential schema offers (#7327)."""
+        _require_admin()
+        return oauth_provider_catalog()
 
     @web.method()
     def oauth_apps_admin_create(self, values: dict):

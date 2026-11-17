@@ -191,13 +191,92 @@ def resolve_app_client(app_id, project_id: int | None, credential_type: str | No
     }
 
 
+def _credential_schema(credential_type: str | None) -> dict:
+    """The credential type's JSON schema as registered by the SDK; empty when the type is not registered."""
+    try:
+        from .models.pd.registry import CONFIG_TYPE_REGISTRY  # pylint: disable=C0415
+    except ImportError:
+        return {}
+    entry = CONFIG_TYPE_REGISTRY.get(credential_type)
+    return getattr(entry, 'config_schema', None) or {}
+
+
+def scope_catalog(credential_type: str) -> dict:
+    """What an app offers for a credential type, read from the credential's own schema (#7327).
+
+    ``options`` are the schema's scope checkboxes (value, label, description and flags such as
+    ``admin_consent``), or None when the schema has no list: its scopes are free text.
+    ``default_scopes`` is the schema default, used when an app sets none for the type.
+    """
+    schema = _credential_schema(credential_type)
+    field = (schema.get('properties') or {}).get('scopes') or {}
+    options = field.get('checkbox_options')
+    default = field.get('default')
+    return {
+        'type': credential_type,
+        'label': (schema.get('metadata') or {}).get('label') or credential_type,
+        'options': [dict(option) for option in options] if isinstance(options, list) and options else None,
+        'default_scopes': list(default) if isinstance(default, list) else [],
+        'description': field.get('description') or '',
+    }
+
+
 def recommended_scopes(credential_type: str | None) -> list[str]:
     """The credential type's default scopes, used when the app sets none for it."""
-    from .models.pd.registry import CONFIG_TYPE_REGISTRY  # pylint: disable=C0415
-    entry = CONFIG_TYPE_REGISTRY.get(credential_type)
-    schema = (getattr(entry, 'config_schema', None) or {}).get('properties', {}).get('scopes', {})
-    default = schema.get('default')
-    return list(default) if isinstance(default, list) else []
+    return scope_catalog(credential_type)['default_scopes'] if credential_type else []
+
+
+def oauth_provider_catalog() -> list[dict]:
+    """Providers an admin can create apps for, with each credential type's scope catalog."""
+    catalog = []
+    for provider_id, provider in OAUTH_PROVIDERS.items():
+        served_by_default = default_credential_types(provider)
+        catalog.append({
+            'id': provider_id,
+            'label': provider.label,
+            'default_discovery_endpoint': provider.default_discovery_endpoint,
+            'discovery_endpoint_hint': provider.discovery_endpoint_hint,
+            'credential_types': [
+                # opt_in: off for new apps and for apps saved without a type list
+                {**scope_catalog(credential_type), 'opt_in': credential_type not in served_by_default}
+                for credential_type in provider.credential_types
+            ],
+        })
+    return catalog
+
+
+def _checked_scopes(data: dict) -> dict:
+    """Scopes per credential type, checked against each type's schema (#7327).
+
+    A type with a scope list accepts only offered values and, while the app serves it, at least one.
+    A type without a list takes free text, cleaned by the provider. Scopes of a switched-off type are
+    kept as stored, so switching it on again restores them.
+    """
+    provider = provider_of(data)
+    served = data.get('credential_types')
+    served = set(served if served is not None else default_credential_types(provider))
+    scopes = dict(data.get('scopes') or {})
+    for credential_type in provider.credential_types:
+        catalog = scope_catalog(credential_type)
+        picked = scopes.get(credential_type) or []
+        if catalog['options'] is None:
+            if picked and provider.normalize_free_scopes:
+                try:
+                    scopes[credential_type] = provider.normalize_free_scopes(picked)
+                except ValueError as e:
+                    raise ConfigurationError('scopes', f"{catalog['label']}: {e}") from e
+            continue
+        if credential_type not in served:
+            continue
+        offered = [option['value'] for option in catalog['options']]
+        unknown = [scope for scope in picked if scope not in offered]
+        if unknown:
+            raise ConfigurationError(
+                'scopes', f"{catalog['label']} credentials do not offer: {', '.join(unknown)}")
+        if not picked:
+            raise ConfigurationError(
+                'scopes', f"Select at least one {catalog['label']} scope, or switch {catalog['label']} off")
+    return {key: value for key, value in scopes.items() if value}
 
 
 def _is_app_only(config_type: str | None, data: dict | None) -> bool:
@@ -574,6 +653,7 @@ def validated_app_data(values: dict, existing: dict | None = None) -> dict:
     except ValidationError as e:
         raise handle_validation_error(e) from e
     data = app.model_dump(mode='python')
+    data['scopes'] = _checked_scopes(data)
     data['client_secret'] = app.client_secret.get_secret_value()
     return data
 
