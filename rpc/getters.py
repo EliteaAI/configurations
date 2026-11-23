@@ -98,6 +98,35 @@ class RPC:
         """Unsealed stored login of a credential the run can expand; never trusts the predict payload."""
         return get_stored_login(project_id, user_id, configuration_uuid, expected_type)
 
+    @web.rpc('configurations_save_stored_login', 'save_stored_login')
+    def configurations_save_stored_login(self, project_id: int, configuration_uuid: str, expected_type: str,
+                                         fields: dict, expected_refresh_token: str | None = None) -> bool:
+        """Server-side write of a saved login; callers check who may manage it (or it is a token rotation)."""
+        from ..utils import save_stored_login
+        return save_stored_login(project_id, configuration_uuid, expected_type, fields, expected_refresh_token)
+
+    @web.rpc('configurations_get_by_uuid_in_project')
+    def configurations_get_by_uuid_in_project(self, project_id: int, configuration_uuid: str,
+                                              expected_type: str) -> dict | None:
+        """A credential of exactly this project, with its client unsealed for the server-side token exchange."""
+        from ..utils import _find_login_configuration
+        from ..local_tools import VaultClient
+        found = _find_login_configuration(project_id, configuration_uuid, expected_type)
+        if not found:
+            return None
+        data = {k: v for k, v in found[2].items() if k != 'refresh_token'}
+        return {'id': found[0], 'uuid': str(configuration_uuid), 'data': VaultClient(project_id).unsecret(data)}
+
+    @web.rpc('configurations_clear_stored_login', 'clear_stored_login')
+    def configurations_clear_stored_login(self, project_id: int, configuration_uuid: str, expected_type: str) -> bool:
+        from ..utils import clear_stored_login
+        return clear_stored_login(project_id, configuration_uuid, expected_type)
+
+    @web.rpc('configurations_can_manage_stored_login', 'can_manage_stored_login')
+    def configurations_can_manage_stored_login(self, project_id: int, user_id: int) -> bool:
+        from ..tracing_access import can_manage_stored_login
+        return can_manage_stored_login(project_id, user_id)
+
     @web.rpc('configurations_get_filtered_public')
     def configurations_get_filtered_public(self, filter_fields: Optional[dict] = None) -> list[dict]:
         public_project_id = get_public_project_id()

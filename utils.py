@@ -19,6 +19,9 @@ from .llm_model_profiles import check_llm_model_profile_bounds
 from .oauth_apps import OAUTH_APP_TOOLKIT_TYPES, apply_oauth_app, record_login_client, reject_shared, resolve_on_use, strip_app_client_fields, decorate_credentials
 from .models.pd.registry import ADMIN_MANAGED_TYPES
 
+# Credentials whose login only Main reads and writes (refresh token never expanded into toolkits)
+SERVER_SAVED_LOGIN_TYPES = frozenset({"mcp_login"})
+
 
 def parse_ids_filter(ids: str | list | None, max_ids: int = 100) -> list[int]:
     """
@@ -401,6 +404,11 @@ def _merge_configuration(payload: dict, config: Configuration, public_project_id
     resolve_on_use(payload, config, config.project_id)
     apply_oauth_app(payload, config.type, config.project_id, unsecret)
 
+    if config.type in SERVER_SAVED_LOGIN_TYPES:
+        # The long-lived login stays in Main (read only via get_stored_login), never in an expanded toolkit
+        payload['saved_login'] = bool(payload.pop('refresh_token', None))
+        payload.pop('client_secret', None)
+
     payload['configuration_uuid'] = str(config.uuid)
     payload['configuration_project_id'] = config.project_id
     payload['configuration_type'] = config.type
@@ -528,7 +536,91 @@ def expand_configuration(payload: dict, current_project_id: int, user_id: int = 
             expand_configuration(payload[k], current_project_id=current_project_id, user_id=user_id, unsecret=unsecret, already_done=already_done)
 
 STORED_LOGIN_FIELDS = ("refresh_token", "client_id", "client_secret", "oauth_discovery_endpoint",
-                       "scopes", "url", "tenant_id")
+                       "scopes", "url", "tenant_id", "token_endpoint", "resource", "used_dcr", "account")
+# Fields a server-side login save may write; everything else on the credential is left as the user set it
+SAVABLE_LOGIN_FIELDS = frozenset({"refresh_token", "client_id", "client_secret", "token_endpoint", "resource",
+                                  "used_dcr", "account", "scopes"})
+
+
+def _find_login_configuration(project_id: int, configuration_uuid: str, expected_type: str):
+    import uuid as uuid_lib
+    try:
+        uuid_value = uuid_lib.UUID(str(configuration_uuid))
+    except (TypeError, ValueError):
+        return None
+    with db.get_session(project_id) as session:
+        config = session.query(Configuration).filter_by(uuid=uuid_value, type=expected_type).first()
+        return (config.id, config.generation, dict(config.data or {})) if config else None
+
+
+def save_stored_login(project_id: int, configuration_uuid: str, expected_type: str, fields: dict,
+                      expected_refresh_token: str | None = None) -> bool:
+    """Write login fields of a credential in its own project; False when it is gone or was re-logged meanwhile."""
+    if expected_refresh_token is not None:
+        # A token rotation only ever replaces the refresh token, for any stored-login type
+        fields = {"refresh_token": fields.get("refresh_token")}
+    elif expected_type not in SERVER_SAVED_LOGIN_TYPES:
+        return False
+    found = _find_login_configuration(project_id, configuration_uuid, expected_type)
+    if not found:
+        return False
+    config_id, generation, data = found
+    if expected_refresh_token is not None:
+        # Rotation write-back: skip when someone re-logged or logged out since this refresh started
+        current = VaultClient(project_id).unsecret({"refresh_token": data.get("refresh_token")})["refresh_token"]
+        if current != expected_refresh_token:
+            return False
+    previous_secrets = {v for k, v in data.items() if k in fields and fields[k] != v
+                        and isinstance(v, str) and v.startswith('{{secret.')}
+    data.update({k: v for k, v in fields.items() if k in SAVABLE_LOGIN_FIELDS})
+    data = {k: v for k, v in data.items() if v is not None}
+    try:
+        update_configuration(project_id, config_id, {"data": data}, expected_generation=generation)
+    except ConfigurationError as e:
+        if e.field == "generation":
+            return False
+        raise
+    if previous_secrets:
+        try:
+            purge_secrets(project_id=project_id, secrets_to_delete=previous_secrets)
+        except Exception:  # pylint: disable=W0703
+            log.warning("save_stored_login: old secrets of %s were not purged", configuration_uuid)
+    return True
+
+
+def _retry_clear(project_id: int, configuration_uuid: str, expected_type: str) -> bool:
+    try:
+        return clear_stored_login(project_id, configuration_uuid, expected_type, _retry=False)
+    except ConfigurationError:
+        return False
+
+
+def clear_stored_login(project_id: int, configuration_uuid: str, expected_type: str, _retry: bool = True) -> bool:
+    """Log out: drop the refresh token (and a dynamically registered client, which is useless without it)."""
+    found = _find_login_configuration(project_id, configuration_uuid, expected_type)
+    if not found:
+        return False
+    config_id, generation, data = found
+    drop = {"refresh_token", "account"}
+    if data.get("used_dcr"):
+        drop |= {"client_id", "client_secret", "used_dcr"}
+    old_secrets = {v for k, v in data.items() if k in drop and isinstance(v, str) and v.startswith('{{secret.')}
+    try:
+        update_configuration(project_id, config_id, {"data": {k: v for k, v in data.items() if k not in drop}},
+                             expected_generation=generation)
+    except ConfigurationError as e:
+        if e.field != "generation":
+            raise
+        if not _retry:
+            raise
+        # A token rotation landed meanwhile: retry once on the fresh row
+        return _retry_clear(project_id, configuration_uuid, expected_type)
+    if old_secrets:
+        try:
+            purge_secrets(project_id=project_id, secrets_to_delete=old_secrets)
+        except Exception:  # pylint: disable=W0703
+            log.warning("clear_stored_login: old secrets of %s were not purged", configuration_uuid)
+    return True
 
 
 def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected_type: str):
@@ -565,7 +657,7 @@ def get_stored_login(project_id: int, user_id, configuration_uuid: str, expected
         if not data.get("refresh_token"):
             return None
         login = {key: data.get(key) for key in STORED_LOGIN_FIELDS}
-        login.update(configuration_uuid=str(config.uuid), type=config.type)
+        login.update(configuration_uuid=str(config.uuid), type=config.type, project_id=config.project_id)
         return login
     return None
 
@@ -863,6 +955,7 @@ def get_configurations(
     sort_by: str = "created_at",
     sort_order: str = "desc",
     ids: str = None,
+    elitea_title: str = None,
 ):
     from .local_tools import rpc_manager
 
@@ -898,6 +991,8 @@ def get_configurations(
             project_query = project_query.filter(Configuration.section.in_(section_filter))
         if query:
             project_query = project_query.filter(Configuration.label.ilike(f"%{query}%"))
+        if elitea_title:
+            project_query = project_query.filter(Configuration.elitea_title == elitea_title)
 
         # Folder-level permissions (#6524): applied before count/pagination so the
         # total and the page slice both exclude no-access folders.
@@ -1006,6 +1101,8 @@ def get_configurations(
                 shared_query = shared_query.where(Configuration.type.in_(type_filter))
             if section_filter:
                 shared_query = shared_query.where(Configuration.section.in_(section_filter))
+            if elitea_title:
+                shared_query = shared_query.where(Configuration.elitea_title == elitea_title)
 
             # Apply sorting to shared query
             sort_column = getattr(Configuration, sort_by, Configuration.created_at)

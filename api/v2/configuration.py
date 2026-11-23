@@ -147,7 +147,7 @@ class API(APIBase):
         refused = refuse_write(project_id, config_type, new_title if new_title != stored_title else None)
         if refused:
             return refused
-        if 'data' in update_payload and stored_login_changed(stored_data, update_payload['data']):
+        if 'data' in update_payload and stored_login_changed(stored_data, update_payload['data'], config_type):
             if not can_manage_stored_login(project_id, auth.current_user().get('id')):
                 return {"error": STORED_LOGIN_DENIED, "field": "refresh_token"}, 403
         try:

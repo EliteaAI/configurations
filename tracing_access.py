@@ -123,11 +123,19 @@ def hidden_config_types(project_id: int | None, user_id: int | None) -> set[str]
     return hidden
 
 
-def stored_login_changed(previous_data: dict | None, new_data: dict | None) -> bool:
-    """True when a write sets, clears or replaces the credential's stored Microsoft login."""
-    old = (previous_data or {}).get('refresh_token')
-    new = (new_data or {}).get('refresh_token')
-    return bool(old or new) and old != new
+# Where an mcp_login's saved login is sent on refresh: changing one redirects the shared token (#7643)
+MCP_LOGIN_BOUND_FIELDS = ('token_endpoint', 'url', 'resource', 'client_id', 'client_secret', 'used_dcr')
+
+
+def stored_login_changed(previous_data: dict | None, new_data: dict | None, config_type: str | None = None) -> bool:
+    """True when a write sets, clears or replaces the credential's stored login, or (mcp_login) where it is sent."""
+    previous, new_data = previous_data or {}, new_data or {}
+    old, new = previous.get('refresh_token'), new_data.get('refresh_token')
+    if bool(old or new) and old != new:
+        return True
+    if config_type == 'mcp_login' and old:
+        return any(previous.get(k) != new_data.get(k) for k in MCP_LOGIN_BOUND_FIELDS)
+    return False
 
 
 def can_manage_stored_login(project_id: int, user_id: int | None) -> bool:
