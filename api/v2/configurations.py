@@ -48,6 +48,8 @@ class API(APIBase):
              "description": "Search string for configuration label."},
             {"name": "ids", "in": "query", "schema": {"type": "string"},
              "description": "Comma-separated list of configuration IDs to filter by (max 100). Used for folder contents."},
+            {"name": "elitea_title", "in": "query", "schema": {"type": "string"},
+             "description": "Exact credential title, e.g. the one a toolkit setting references."},
         ],
         available_to_users=True,
     )
@@ -97,6 +99,8 @@ class API(APIBase):
 
         query = request.args.get('query')
         ids_param = request.args.get('ids')
+        # Exact title match: a toolkit's credential reference names one credential, whatever the page size
+        elitea_title = request.args.get('elitea_title') or None
 
         response = get_configurations(
             project_id=project_id,
@@ -111,6 +115,7 @@ class API(APIBase):
             sort_by=sort_by,
             sort_order=sort_order,
             ids=ids_param,
+            elitea_title=elitea_title,
         )
 
         # Enrich with folder info (bulk query) - non-blocking

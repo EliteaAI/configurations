@@ -129,6 +129,33 @@ def test_stored_login_change_detection(previous, new, changed):
     assert module.stored_login_changed(previous, new) is changed
 
 
+MCP_SAVED = {"refresh_token": REF_A, "url": "https://mcp.example/mcp", "token_endpoint": "https://auth.example/token",
+             "client_id": "c", "client_secret": REF_B, "resource": "https://mcp.example/mcp", "used_dcr": True}
+
+
+@pytest.mark.parametrize("field, value", [
+    ("token_endpoint", "https://attacker.example/token"),  # review #116: redirects the refresh token + secret
+    ("url", "https://attacker.example/mcp"),
+    ("resource", "https://attacker.example/mcp"),
+    ("client_id", "other"),
+    ("client_secret", "{{secret.other}}"),
+    ("used_dcr", False),
+])
+def test_7643_editing_where_a_saved_mcp_login_is_sent_counts_as_a_login_change(field, value):
+    module = load_tracing_access()
+    assert module.stored_login_changed(MCP_SAVED, {**MCP_SAVED, field: value}, "mcp_login") is True
+
+
+def test_7643_unrelated_or_unsaved_mcp_login_edits_are_not_a_login_change():
+    module = load_tracing_access()
+    assert module.stored_login_changed(MCP_SAVED, {**MCP_SAVED, "scopes": "x"}, "mcp_login") is False
+    assert module.stored_login_changed(MCP_SAVED, dict(MCP_SAVED), "mcp_login") is False
+    unsaved = {k: v for k, v in MCP_SAVED.items() if k != "refresh_token"}
+    assert module.stored_login_changed(unsaved, {**unsaved, "token_endpoint": "x"}, "mcp_login") is False
+    # Other stored-login types keep the refresh-token-only rule
+    assert module.stored_login_changed(MCP_SAVED, {**MCP_SAVED, "client_id": "other"}, "outlook") is False
+
+
 def test_team_admin_may_manage_stored_login():
     module = load_tracing_access(rpc=FakeRpc(admin_project_users={25: {3}}))
     assert module.can_manage_stored_login(25, 3) is True

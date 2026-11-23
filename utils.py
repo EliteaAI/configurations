@@ -955,6 +955,7 @@ def get_configurations(
     sort_by: str = "created_at",
     sort_order: str = "desc",
     ids: str = None,
+    elitea_title: str = None,
 ):
     from .local_tools import rpc_manager
 
@@ -990,6 +991,8 @@ def get_configurations(
             project_query = project_query.filter(Configuration.section.in_(section_filter))
         if query:
             project_query = project_query.filter(Configuration.label.ilike(f"%{query}%"))
+        if elitea_title:
+            project_query = project_query.filter(Configuration.elitea_title == elitea_title)
 
         # Folder-level permissions (#6524): applied before count/pagination so the
         # total and the page slice both exclude no-access folders.
@@ -1098,6 +1101,8 @@ def get_configurations(
                 shared_query = shared_query.where(Configuration.type.in_(type_filter))
             if section_filter:
                 shared_query = shared_query.where(Configuration.section.in_(section_filter))
+            if elitea_title:
+                shared_query = shared_query.where(Configuration.elitea_title == elitea_title)
 
             # Apply sorting to shared query
             sort_column = getattr(Configuration, sort_by, Configuration.created_at)
