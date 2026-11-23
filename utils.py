@@ -236,6 +236,51 @@ def delete_configuration(project_id: int, config_id: int, owner: str | None = No
     return data
 
 
+# A stored login (refresh_token) was issued for these settings: once one changes, the token is refused
+# by the identity provider or belongs to another app, so an edit that keeps the old token drops it (#7491)
+LOGIN_BOUND_FIELDS = ('url', 'tenant_id', 'client_id', 'client_secret', 'oauth_discovery_endpoint',
+                      'oauth_app_id', 'token_endpoint', 'resource')
+
+
+def _is_secret_reference(value) -> bool:
+    return isinstance(value, str) and value.startswith('{{secret.') and value.endswith('}}')
+
+
+def _bound_value_changed(old, new, unsecret=None) -> bool:
+    old = old.get_secret_value() if isinstance(old, SecretStr) else old
+    new = new.get_secret_value() if isinstance(new, SecretStr) else new
+    old, new = (v.strip() if isinstance(v, str) else v for v in (old, new))
+    if (old or None) == (new or None):
+        return False
+    # A retyped secret replaces the vault reference: compare what the reference holds
+    if unsecret and _is_secret_reference(old) and isinstance(new, str) and not _is_secret_reference(new):
+        try:
+            return unsecret(old) != new
+        except Exception:  # pylint: disable=W0703
+            return True
+    return True
+
+
+def _unsecret_value(project_id: int, reference: str):
+    return VaultClient(project_id).unsecret({'value': reference})['value']
+
+
+def drop_unbound_login(previous_data: dict | None, new_data: dict | None, unsecret=None) -> str | None:
+    """Remove the stored login from ``new_data`` when the write keeps it but changes a setting it is bound to.
+
+    Returns the dropped refresh token (as stored), or None. A write that itself sets or clears the login
+    (Login, Logout, token rotation) is left alone.
+    """
+    previous, new = previous_data or {}, new_data
+    old_login = previous.get('refresh_token')
+    if not old_login or not isinstance(new, dict) or new.get('refresh_token') != old_login:
+        return None
+    if not any(_bound_value_changed(previous.get(k), new.get(k), unsecret) for k in LOGIN_BOUND_FIELDS):
+        return None
+    new.pop('refresh_token', None)
+    return old_login
+
+
 def update_configuration(project_id: int, config_id: int, update_payload: dict,
                          expected_generation: int | None = None, owner: str | None = None) -> dict:
     """
@@ -266,12 +311,17 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
 
         old_elitea_title = config.elitea_title
         previous_data = dict(config.data or {})
-        
+        dropped_login = None
+
         # If data is being updated, handle secret fields
         if 'data' in update_payload:
             # Get the configuration type registry entry
             entry = CONFIG_TYPE_REGISTRY.get(config.type)
             strip_app_client_fields(config.type, update_payload['data'], project_id, previous=config.data)
+            dropped_login = drop_unbound_login(previous_data, update_payload['data'],
+                                               unsecret=lambda ref: _unsecret_value(project_id, ref))
+            if dropped_login:
+                log.info(f'Credential {config_id} in project {project_id}: login settings changed, stored login removed')
             if config.type in OAUTH_APP_TOOLKIT_TYPES:
                 meta = record_login_client(config.type, update_payload['data'], config.data,
                                            update_payload.get('meta', config.meta), project_id)
@@ -355,6 +405,12 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
                         vault_client.set_secrets(secrets)
                 except Exception as e:
                     log.warning(f"Failed to set tier defaults for updated model: {e}")
+
+            if _is_secret_reference(dropped_login):
+                try:
+                    purge_secrets(project_id=project_id, secrets_to_delete={dropped_login})
+                except Exception:  # pylint: disable=W0703
+                    log.warning(f'Credential {config_id}: the removed login was not purged from the vault')
 
             result = ConfigurationDetails.model_validate(config).model_dump(mode='json')
             if 'data' in update_payload or config.type in {'auto_routing', 'environment_settings'}:
