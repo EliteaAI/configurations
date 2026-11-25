@@ -704,10 +704,9 @@ class Method:  # pylint: disable=E1101,R0903,W0201
     @web.method()
     def migrate_service_prompt_application_draft(self, *args, **kwargs):
         """Upgrade the 'generate_application_draft' and 'edit_application_draft' service prompts
-        to the current defaults, which take the Chat Starters and agent skill limits from the
-        {max_conversation_starters} and {max_skills_per_agent} placeholders instead of a hardcoded
-        4 and 5. The generate prompt now suggests at most 4 starters unless the user asks for a
-        specific number, capped at {max_conversation_starters}.
+        to the current defaults, which take the Chat Starters cap and the agent skill limit from the
+        {max_conversation_starters} and {max_skills_per_agent} placeholders. Under that cap, the
+        generate prompt suggests at most 4 starters unless the user asks for a specific number.
         Param: [dry_run]
 
         ``ensure_default_service_prompts`` never updates existing rows, so this task overwrites a
