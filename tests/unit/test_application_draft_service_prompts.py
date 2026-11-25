@@ -74,7 +74,9 @@ def test_prompt_renders_the_configured_limit(defaults, key):
     values = {slot: '' for slot in RESOURCE_SLOTS}
     values.update(current_config='{}', max_conversation_starters=7, max_skills_per_agent=37)
     rendered = defaults.SERVICE_PROMPT_DEFAULTS[key].format(**values)
-    assert ('max 7 items' in rendered or 'never more than 7)' in rendered) and '{max_conversation_starters}' not in rendered
+    expected_starters_limit = {'edit_application_draft': 'max 7 items',
+                               'generate_application_draft': 'never more than 7)'}[key]
+    assert expected_starters_limit in rendered and '{max_conversation_starters}' not in rendered
     assert ('Maximum 37 skills.' in rendered or '(max 37)' in rendered) and '{max_skills_per_agent}' not in rendered
 
 
