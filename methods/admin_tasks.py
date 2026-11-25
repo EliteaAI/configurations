@@ -704,9 +704,9 @@ class Method:  # pylint: disable=E1101,R0903,W0201
     @web.method()
     def migrate_service_prompt_application_draft(self, *args, **kwargs):
         """Upgrade the 'generate_application_draft' and 'edit_application_draft' service prompts
-        to the current defaults, which take the Chat Starters and agent skill limits from the
-        {max_conversation_starters} and {max_skills_per_agent} placeholders instead of a hardcoded
-        4 and 5.
+        to the current defaults, which take the Chat Starters cap and the agent skill limit from the
+        {max_conversation_starters} and {max_skills_per_agent} placeholders. Under that cap, the
+        generate prompt suggests at most 4 starters unless the user asks for a specific number.
         Param: [dry_run]
 
         ``ensure_default_service_prompts`` never updates existing rows, so this task overwrites a
@@ -756,12 +756,17 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                         result["up_to_date"].append(key)
                         continue
                     if current_prompt not in {p.strip() for p in APPLICATION_DRAFT_PAST_DEFAULTS[key]}:
+                        starters_hint = (
+                            " Make it suggest at most 4 starters unless the user asks for a specific number, and use "
+                            "{max_conversation_starters} only as the cap."
+                            if key == "generate_application_draft" else ""
+                        )
                         log.warning(
                             "%smigrate_service_prompt_application_draft: configuration id=%s (%s) does "
                             "not match any known past default — assuming it was customized; leaving it "
                             "untouched. Add {max_conversation_starters} and {max_skills_per_agent} to it by hand "
-                            "if you want them.",
-                            prefix, cfg.id, key,
+                            "if you want them.%s",
+                            prefix, cfg.id, key, starters_hint,
                         )
                         result["skipped_custom"].append(key)
                         continue

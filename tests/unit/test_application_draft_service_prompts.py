@@ -49,10 +49,18 @@ def test_edit_prompt_slots(defaults):
     assert _slots(prompt) == RESOURCE_SLOTS | {'max_conversation_starters', 'max_skills_per_agent', 'current_config'}
 
 
-@pytest.mark.parametrize('key', KEYS)
-def test_no_hardcoded_starters_limit_remains(defaults, key):
-    prompt = defaults.SERVICE_PROMPT_DEFAULTS[key]
+def test_edit_prompt_has_no_hardcoded_starters_limit(defaults):
+    prompt = defaults.SERVICE_PROMPT_DEFAULTS['edit_application_draft']
     assert 'max 4' not in prompt and '1–4' not in prompt
+
+
+def test_generate_prompt_suggests_at_most_4_starters_and_caps_at_the_limit(defaults):
+    values = {slot: '' for slot in RESOURCE_SLOTS}
+    values.update(max_conversation_starters=10, max_skills_per_agent=5)
+    rendered = ' '.join(defaults.SERVICE_PROMPT_DEFAULTS['generate_application_draft'].format(**values).split())
+    assert '(up to 4 items unless the user asks for a specific number; never more than 10)' in rendered
+    assert 'never more than 10, and no more than 4 unless the user asks for a specific number.' in rendered
+    assert '1–10' not in rendered and 'max 10 items' not in rendered
 
 
 @pytest.mark.parametrize('key', KEYS)
@@ -66,29 +74,46 @@ def test_prompt_renders_the_configured_limit(defaults, key):
     values = {slot: '' for slot in RESOURCE_SLOTS}
     values.update(current_config='{}', max_conversation_starters=7, max_skills_per_agent=37)
     rendered = defaults.SERVICE_PROMPT_DEFAULTS[key].format(**values)
-    assert 'max 7 items' in rendered and '{max_conversation_starters}' not in rendered
+    expected_starters_limit = {'edit_application_draft': 'max 7 items',
+                               'generate_application_draft': 'never more than 7)'}[key]
+    assert expected_starters_limit in rendered and '{max_conversation_starters}' not in rendered
     assert ('Maximum 37 skills.' in rendered or '(max 37)' in rendered) and '{max_skills_per_agent}' not in rendered
 
 
 def test_past_defaults_are_frozen_and_differ_from_current(defaults):
     past = defaults.APPLICATION_DRAFT_PAST_DEFAULTS
     assert set(past) == set(KEYS)
-    assert len(past['generate_application_draft']) == 6
+    assert len(past['generate_application_draft']) == 7
     assert len(past['edit_application_draft']) == 4
     for key, prompts in past.items():
         assert len(set(prompts)) == len(prompts)
         assert defaults.SERVICE_PROMPT_DEFAULTS[key].strip() not in {p.strip() for p in prompts}
-        assert all('{max_skills_per_agent}' not in p for p in prompts)
+    assert all('{max_skills_per_agent}' not in p for p in past['edit_application_draft'])
+    assert all('{max_skills_per_agent}' not in p for p in past['generate_application_draft'][:-1])
 
 
-@pytest.mark.parametrize('key', KEYS)
-def test_latest_past_default_differs_only_by_the_skills_limit_and_shape(defaults, key):
+def test_latest_edit_past_default_differs_only_by_the_skills_limit_and_shape(defaults):
+    key = 'edit_application_draft'
     latest = defaults.APPLICATION_DRAFT_PAST_DEFAULTS[key][-1]
     current = defaults.SERVICE_PROMPT_DEFAULTS[key]
     skill_entry = '"id": <int>, "name": "<str>"}}'
     assert current.count(skill_entry) == 1
     previous = current.replace('{max_skills_per_agent}', '5').replace(
         skill_entry, '"id": <int>, "name": "<str>", "description": "<str or null>"}}')
+    assert previous == latest
+
+
+def test_latest_generate_past_default_differs_only_by_the_starters_wording(defaults):
+    key = 'generate_application_draft'
+    latest = defaults.APPLICATION_DRAFT_PAST_DEFAULTS[key][-1]
+    current = defaults.SERVICE_PROMPT_DEFAULTS[key]
+    shape = '(up to 4 items unless the user asks for a specific number; never more than {max_conversation_starters})'
+    rule = ('- "conversation_starters" is a list of short example questions (each ≤ 768 characters), or null: never more than\n'
+            '  {max_conversation_starters}, and no more than 4 unless the user asks for a specific number.\n')
+    assert current.count(shape) == 1 and current.count(rule) == 1
+    previous = current.replace(shape, '(max {max_conversation_starters} items)').replace(
+        rule, '- "conversation_starters" is a list of 1–{max_conversation_starters} short example '
+              'questions (each ≤ 768 characters), or null.\n')
     assert previous == latest
 
 
