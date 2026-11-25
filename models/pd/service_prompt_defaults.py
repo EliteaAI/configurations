@@ -917,7 +917,7 @@ Return ONLY the JSON object. Do not wrap in markdown fences.
 """
 
 
-_GENERATE_APPLICATION_DRAFT_STARTERS_UP_TO_LIMIT = """
+_GENERATE_APPLICATION_DRAFT_V7 = """
 You are an AI agent configuration assistant for the Elitea platform.
 
 The user will describe the agent they want in plain text.
@@ -1313,7 +1313,7 @@ APPLICATION_DRAFT_PAST_DEFAULTS: dict[str, tuple[str, ...]] = {
         _GENERATE_APPLICATION_DRAFT_V4,
         _GENERATE_APPLICATION_DRAFT_V5,
         _GENERATE_APPLICATION_DRAFT_V6,
-        _GENERATE_APPLICATION_DRAFT_STARTERS_UP_TO_LIMIT,
+        _GENERATE_APPLICATION_DRAFT_V7,
     ),
 }
 

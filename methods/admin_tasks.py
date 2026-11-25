@@ -758,7 +758,8 @@ class Method:  # pylint: disable=E1101,R0903,W0201
                         continue
                     if current_prompt not in {p.strip() for p in APPLICATION_DRAFT_PAST_DEFAULTS[key]}:
                         starters_hint = (
-                            " Keep suggesting at most 4 starters and use {max_conversation_starters} only as the cap."
+                            " Make it suggest at most 4 starters unless the user asks for a specific number, and use "
+                            "{max_conversation_starters} only as the cap."
                             if key == "generate_application_draft" else ""
                         )
                         log.warning(

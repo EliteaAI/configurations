@@ -57,9 +57,9 @@ def test_edit_prompt_has_no_hardcoded_starters_limit(defaults):
 def test_generate_prompt_suggests_at_most_4_starters_and_caps_at_the_limit(defaults):
     values = {slot: '' for slot in RESOURCE_SLOTS}
     values.update(max_conversation_starters=10, max_skills_per_agent=5)
-    rendered = defaults.SERVICE_PROMPT_DEFAULTS['generate_application_draft'].format(**values)
+    rendered = ' '.join(defaults.SERVICE_PROMPT_DEFAULTS['generate_application_draft'].format(**values).split())
     assert '(up to 4 items unless the user asks for a specific number; never more than 10)' in rendered
-    assert 'never more than\n  10, and no more than 4 unless the user asks for a specific number.' in rendered
+    assert 'never more than 10, and no more than 4 unless the user asks for a specific number.' in rendered
     assert '1–10' not in rendered and 'max 10 items' not in rendered
 
 
@@ -88,6 +88,8 @@ def test_past_defaults_are_frozen_and_differ_from_current(defaults):
     for key, prompts in past.items():
         assert len(set(prompts)) == len(prompts)
         assert defaults.SERVICE_PROMPT_DEFAULTS[key].strip() not in {p.strip() for p in prompts}
+    assert all('{max_skills_per_agent}' not in p for p in past['edit_application_draft'])
+    assert all('{max_skills_per_agent}' not in p for p in past['generate_application_draft'][:-1])
 
 
 def test_latest_edit_past_default_differs_only_by_the_skills_limit_and_shape(defaults):
