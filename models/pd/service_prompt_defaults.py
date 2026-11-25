@@ -545,7 +545,7 @@ Your job is to produce a complete agent configuration as a single JSON object �
   "description": "<string, 1–2304 chars, required>",
   "instructions": "<string>",
   "welcome_message": "<string, max 768 chars, or null>",
-  "conversation_starters": ["<string, max 768 chars>", ...] (max {max_conversation_starters} items) or null,
+  "conversation_starters": ["<string, max 768 chars>", ...] (up to 4 items unless the user asks for a specific number; never more than {max_conversation_starters}) or null,
   "suggested_toolkits": [
     {{"id": <int>, "type": "<toolkit_type e.g. github, artifact>", "name": "<str>", "description": "<str or null>"}}
   ],
@@ -570,7 +570,8 @@ Copy id, type, name exactly as they appear in the Available lists — do not inv
 - "description" is required, 1–2304 characters.
 - "instructions" should be a detailed system prompt for the agent.
 - "welcome_message" is optional, maximum 768 characters.
-- "conversation_starters" is a list of 1–{max_conversation_starters} short example questions (each ≤ 768 characters), or null.
+- "conversation_starters" is a list of short example questions (each ≤ 768 characters), or null: never more than
+  {max_conversation_starters}, and no more than 4 unless the user asks for a specific number.
 - "suggested_toolkits" must use ONLY entries from Available Toolkits below. type must be exactly as listed.
 - "suggested_mcp" must use ONLY entries from Available MCP Servers below. type must be "mcp".
 - "suggested_agents" must use ONLY entries from Available Agents below. type must be "agent".
@@ -893,6 +894,72 @@ Copy id, type, name exactly as they appear in the Available lists — do not inv
 - "suggested_agents" must use ONLY entries from Available Agents below. type must be "agent".
 - "suggested_pipelines" must use ONLY entries from Available Pipelines below. type must be "pipeline".
 - "suggested_skills" must use ONLY entries from Available Skills below. Maximum 5 skills.
+- If none are relevant, return empty lists [].
+
+## Available Toolkits:
+{toolkits}
+
+## Available MCP Servers:
+{mcp}
+
+## Available Agents:
+{agents}
+
+## Available Pipelines:
+{pipelines}
+
+## Available Skills:
+{skills}
+
+Return ONLY the JSON object. Do not wrap in markdown fences.
+- Copy project_id exactly as listed for each agent, pipeline and skill: ids repeat across
+  projects, so the pair (project_id, id) identifies the item.
+"""
+
+
+_GENERATE_APPLICATION_DRAFT_STARTERS_UP_TO_LIMIT = """
+You are an AI agent configuration assistant for the Elitea platform.
+
+The user will describe the agent they want in plain text.
+Your job is to produce a complete agent configuration as a single JSON object — no prose, no markdown fences, no extra keys.
+
+## Response JSON Schema (return exactly this structure):
+{{
+  "name": "<string, 1–32 chars, required>",
+  "description": "<string, 1–2304 chars, required>",
+  "instructions": "<string>",
+  "welcome_message": "<string, max 768 chars, or null>",
+  "conversation_starters": ["<string, max 768 chars>", ...] (max {max_conversation_starters} items) or null,
+  "suggested_toolkits": [
+    {{"id": <int>, "type": "<toolkit_type e.g. github, artifact>", "name": "<str>", "description": "<str or null>"}}
+  ],
+  "suggested_mcp": [
+    {{"id": <int>, "type": "mcp", "name": "<str>", "description": "<str or null>"}}
+  ],
+  "suggested_agents": [
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "agent"}}
+  ],
+  "suggested_pipelines": [
+    {{"project_id": <int>, "application_id": <int>, "name": "<str>", "description": "<str or null>", "type": "pipeline"}}
+  ],
+  "suggested_skills": [
+    {{"project_id": <int>, "id": <int>, "name": "<str>"}}
+  ]
+}}
+
+Copy id, type, name exactly as they appear in the Available lists — do not invent or modify values.
+
+## Rules:
+- "name" is required, 1–32 characters.
+- "description" is required, 1–2304 characters.
+- "instructions" should be a detailed system prompt for the agent.
+- "welcome_message" is optional, maximum 768 characters.
+- "conversation_starters" is a list of 1–{max_conversation_starters} short example questions (each ≤ 768 characters), or null.
+- "suggested_toolkits" must use ONLY entries from Available Toolkits below. type must be exactly as listed.
+- "suggested_mcp" must use ONLY entries from Available MCP Servers below. type must be "mcp".
+- "suggested_agents" must use ONLY entries from Available Agents below. type must be "agent".
+- "suggested_pipelines" must use ONLY entries from Available Pipelines below. type must be "pipeline".
+- "suggested_skills" must use ONLY entries from Available Skills below. Maximum {max_skills_per_agent} skills.
 - If none are relevant, return empty lists [].
 
 ## Available Toolkits:
@@ -1246,6 +1313,7 @@ APPLICATION_DRAFT_PAST_DEFAULTS: dict[str, tuple[str, ...]] = {
         _GENERATE_APPLICATION_DRAFT_V4,
         _GENERATE_APPLICATION_DRAFT_V5,
         _GENERATE_APPLICATION_DRAFT_V6,
+        _GENERATE_APPLICATION_DRAFT_STARTERS_UP_TO_LIMIT,
     ),
 }
 
