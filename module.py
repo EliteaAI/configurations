@@ -88,10 +88,6 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.register_admin_task(
                 "migrate_service_prompt_generate_eval_dimensions", migrate_eval_dim_prompt
             )
-            backfill_reasoning = self._wrap_admin_task(Method, "backfill_llm_model_reasoning_profiles", self)
-            this.for_module("admin").module.register_admin_task(
-                "backfill_llm_model_reasoning_profiles", backfill_reasoning, group="R-2.0.7",
-            )
             add_generation = self._wrap_admin_task(Method, "add_configuration_generation_column", self)
             this.for_module("admin").module.register_admin_task(
                 "add_configuration_generation_column", add_generation, group="R-2.0.8",
@@ -129,9 +125,6 @@ class Module(module.ModuleModel):
             this.for_module("admin").module.unregister_admin_task(
                 "migrate_service_prompt_generate_eval_dimensions",
                 self.migrate_service_prompt_generate_eval_dimensions,
-            )
-            this.for_module("admin").module.unregister_admin_task(
-                "backfill_llm_model_reasoning_profiles", self.backfill_llm_model_reasoning_profiles
             )
             this.for_module("admin").module.unregister_admin_task(
                 "add_configuration_generation_column", self.add_configuration_generation_column

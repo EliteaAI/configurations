@@ -286,7 +286,6 @@ def utils(registry):
     _module(f"{package}.models.pd.registry", CONFIG_TYPE_REGISTRY=registry.CONFIG_TYPE_REGISTRY,
             owned_entry=registry.owned_entry, ADMIN_MANAGED_TYPES=registry.ADMIN_MANAGED_TYPES)
     _module(f"{package}.folder_access", folder_exclusion_clause=None)
-    _module(f"{package}.llm_model_profiles", check_llm_model_profile_bounds=None)
     # Admin-app credentials (#7149) are not involved in these writes
     _module(f"{package}.oauth_apps", OAUTH_APP_TOOLKIT_TYPES=(), apply_oauth_app=lambda *_: None,
             record_login_client=lambda *_: None, reject_shared=lambda *_: None,

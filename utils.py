@@ -15,7 +15,6 @@ from .models.pd.configuration import (
 from .models.pd.registry import CONFIG_TYPE_REGISTRY, owned_entry
 from .exceptions import ConfigurationError, handle_validation_error
 from .folder_access import folder_exclusion_clause
-from .llm_model_profiles import check_llm_model_profile_bounds
 from .oauth_apps import OAUTH_APP_TOOLKIT_TYPES, apply_oauth_app, record_login_client, reject_shared, resolve_on_use, strip_app_client_fields, decorate_credentials
 from .models.pd.registry import ADMIN_MANAGED_TYPES
 
@@ -131,7 +130,6 @@ def create_configuration(payload: dict, owner: str | None = None) -> Configurati
         raise handle_validation_error(ve)
     except ValueError as e:
         raise ConfigurationError("payload", str(e))
-    check_llm_model_profile_bounds(parsed.type, parsed.data)
 
     if not parsed._entry.model:
         # Extract data properties from the full config schema
@@ -334,7 +332,6 @@ def update_configuration(project_id: int, config_id: int, update_payload: dict,
                         validated = entry.model.model_validate(update_payload['data'])
                     except ValidationError as ve:
                         raise handle_validation_error(ve)
-                    check_llm_model_profile_bounds(config.type, update_payload['data'])
                     if config.type == 'llm_model' and 'description' in update_payload['data']:
                         update_payload['data']['description'] = validated.description
 

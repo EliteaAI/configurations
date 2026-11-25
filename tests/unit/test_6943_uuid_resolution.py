@@ -86,7 +86,6 @@ def utils():
         'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, ADMIN_MANAGED_TYPES=frozenset({'oauth_app'}), CONFIG_TYPE_REGISTRY={}),
         'folder_access': _stub('folder_access', folder_exclusion_clause=None),
         'routing_access': _stub('routing_access', validate_routing_write=lambda type_, project, payload, existing: payload),
-        'llm_model_profiles': _stub('llm_model_profiles', check_llm_model_profile_bounds=lambda *_: None),
     }
     for module in stubs.values():
         sys.modules[module.__name__] = module
@@ -372,7 +371,6 @@ def admin_task(monkeypatch):
         sys.modules[module.__name__] = module
     sys.modules[f'{package}.common_utils'] = _stub('common_utils', get_public_project_id=lambda: 1)
     sys.modules[f'{package}.models.configuration'] = _stub('models.configuration', Configuration=object)
-    sys.modules[f'{package}.llm_model_profiles'] = _stub('llm_model_profiles', reasoning_backfill_patch=None)
     monkeypatch.setattr(sys.modules['tools'], 'project_constants', {'PROJECT_SCHEMA_TEMPLATE': 'p_{}'}, raising=False)
     module = importlib.import_module(f'{package}.methods.admin_tasks')
     yield module

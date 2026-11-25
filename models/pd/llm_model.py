@@ -5,6 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validat
 EffortLevel = Literal['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 ThinkingType = Literal['adaptive', 'enabled', 'always_on']
 BUDGET_EFFORT_LEVELS = ('low', 'medium', 'high')
+THINKING_TYPES_WITHOUT_OFF_PATH = ('adaptive', 'always_on')
+EFFORTS_CHAT_ANTHROPIC_REJECTS = ('none', 'minimal')
 
 
 # class Capabilities(BaseModel):
@@ -130,8 +132,10 @@ class LlmModel(BaseModel):
                     f"thinking_type 'enabled' maps levels to a token budget and only accepts "
                     f"{', '.join(BUDGET_EFFORT_LEVELS)}; remove {', '.join(beyond_budget)}"
                 )
-        if thinking_type == 'always_on' and 'none' in levels:
-            raise ValueError("thinking_type 'always_on' cannot offer 'none'")
+        if thinking_type in THINKING_TYPES_WITHOUT_OFF_PATH:
+            rejected = [f"'{level}'" for level in levels if level in EFFORTS_CHAT_ANTHROPIC_REJECTS]
+            if rejected:
+                raise ValueError(f"thinking_type '{thinking_type}' cannot offer {', '.join(rejected)}")
         return levels
 
     @field_validator('default_effort')

@@ -16,13 +16,11 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 
 # 2.0.6 -> 2.0.7
 
-# LLM models: fill thinking_type / supported_efforts / default_effort from the reasoning profile (#6819).
-# Admin task (Administration -> Tasks), dry run first, then live:
-#   backfill_llm_model_reasoning_profiles  param: project_id=all;dry_run
-#   backfill_llm_model_reasoning_profiles  param: project_id=all
-# Rows whose name family has no reasoning but have reasoning switched on are reported and left for an admin.
-# #6908: environments that already ran it (dev, stage) run it again — configured rows now lose levels
-# their profile rules out (none on gpt-5.1-codex). Same params, dry run first.
+# LLM models: thinking_type / supported_efforts / default_effort were filled by the admin task
+# backfill_llm_model_reasoning_profiles (#6819). The task is removed in #7209 together with the name profiles
+# it read. An install older than 2.0.7 must run it on a 2.0.7+ release that still has it before upgrading past it
+# (Administration -> Tasks, param: project_id=all;dry_run, then project_id=all). Gate, must return 0 per project:
+SELECT count(*) FROM {pid}.configuration WHERE type = 'llm_model' AND (data->>'supports_reasoning')::boolean AND data->>'thinking_type' IS NULL AND data->>'name' ~* 'claude|anthropic';
 
 # 2.0.7 -> 2.0.8
 
