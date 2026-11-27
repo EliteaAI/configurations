@@ -19,8 +19,10 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # LLM models: thinking_type / supported_efforts / default_effort were filled by the admin task
 # backfill_llm_model_reasoning_profiles (#6819). The task is removed in #7209 together with the name profiles
 # it read. An install older than 2.0.7 must run it on a 2.0.7+ release that still has it before upgrading past it
-# (Administration -> Tasks, param: project_id=all;dry_run, then project_id=all). Gate, must return 0 per project:
-SELECT count(*) FROM {pid}.configuration WHERE type = 'llm_model' AND (data->>'supports_reasoning')::boolean AND data->>'thinking_type' IS NULL AND data->>'name' ~* 'claude|anthropic';
+# (Administration -> Tasks, param: project_id=all;dry_run, then project_id=all). Gate, must return 0 per project;
+# it counts the Claude rows the task has not filled yet (a filled row has supported_efforts, with or without a
+# thinking_type):
+SELECT count(*) FROM {pid}.configuration WHERE type = 'llm_model' AND (data->>'supports_reasoning')::boolean AND data->>'thinking_type' IS NULL AND data->>'supported_efforts' IS NULL AND data->>'default_effort' IS NULL AND data->>'name' ~* 'claude|anthropic';
 
 # 2.0.7 -> 2.0.8
 
