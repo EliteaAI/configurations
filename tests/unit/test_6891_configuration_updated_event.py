@@ -74,7 +74,6 @@ def utils():
         'models.pd.registry': _stub('models.pd.registry', owned_entry=lambda *_: None, ADMIN_MANAGED_TYPES=frozenset({'oauth_app'}), CONFIG_TYPE_REGISTRY={}),
         'folder_access': _stub('folder_access', folder_exclusion_clause=None),
         'routing_access': _stub('routing_access', validate_routing_write=lambda type_, project, payload, existing: payload),
-        'llm_model_profiles': _stub('llm_model_profiles', check_llm_model_profile_bounds=lambda *_: None),
     }
     for module in stubs.values():
         sys.modules[module.__name__] = module

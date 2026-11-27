@@ -16,13 +16,13 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 
 # 2.0.6 -> 2.0.7
 
-# LLM models: fill thinking_type / supported_efforts / default_effort from the reasoning profile (#6819).
-# Admin task (Administration -> Tasks), dry run first, then live:
-#   backfill_llm_model_reasoning_profiles  param: project_id=all;dry_run
-#   backfill_llm_model_reasoning_profiles  param: project_id=all
-# Rows whose name family has no reasoning but have reasoning switched on are reported and left for an admin.
-# #6908: environments that already ran it (dev, stage) run it again — configured rows now lose levels
-# their profile rules out (none on gpt-5.1-codex). Same params, dry run first.
+# LLM models: thinking_type / supported_efforts / default_effort were filled by the admin task
+# backfill_llm_model_reasoning_profiles (#6819). The task is removed in #7209 together with the name profiles
+# it read. An install older than 2.0.7 must run it on a 2.0.7+ release that still has it before upgrading past it
+# (Administration -> Tasks, param: project_id=all;dry_run, then project_id=all). Gate, must return 0 per project;
+# it counts the Claude rows the task has not filled yet (a filled row has supported_efforts, with or without a
+# thinking_type):
+SELECT count(*) FROM {pid}.configuration WHERE type = 'llm_model' AND (data->>'supports_reasoning')::boolean AND data->>'thinking_type' IS NULL AND data->>'supported_efforts' IS NULL AND data->>'default_effort' IS NULL AND data->>'name' ~* 'claude|anthropic';
 
 # 2.0.7 -> 2.0.8
 
@@ -50,3 +50,9 @@ UPDATE {pid}.configuration SET data = data - 'name_generation_image' WHERE secti
 # Only rows still on a past default are rewritten; customized prompts are reported under skipped_custom and left
 # for an admin. Idempotent. Dev already holds hand-edited 2400 versions: if they report skipped_custom, compare
 # them with the new default and re-run after resetting, or leave them as they are.
+
+# LLM model effort levels (#7209): a model whose thinking_type is adaptive or always_on can no longer be saved
+# offering none or minimal, because the provider rejects both. A row that already stores them fails every later
+# update, even a rename, until the levels are removed. Gate, must return no rows per project; for each row listed,
+# open the model in AI Providers -> LLMs, untick None and Minimal and save:
+SELECT id, data->>'name' FROM {pid}.configuration WHERE type = 'llm_model' AND data->>'thinking_type' IN ('adaptive', 'always_on') AND data->'supported_efforts' ?| array['none', 'minimal'];
