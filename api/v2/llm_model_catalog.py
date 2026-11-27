@@ -1,3 +1,5 @@
+from tools import api_tools
+
 from ...local_tools import APIBase, auth, config as c, log, register_openapi, rpc_manager
 
 CATALOG_RPC_TIMEOUT_SECONDS = 12
@@ -44,5 +46,6 @@ class API(APIBase):
             c.DEFAULT_MODE: {"admin": True, "editor": True, "viewer": True},
         },
     })
+    @api_tools.endpoint_metrics
     def get(self, project_id: int, **kwargs):
         return llm_model_catalog(), 200

@@ -76,6 +76,7 @@ def endpoint():
         log=types.SimpleNamespace(warning=lambda *args: None),
         rpc_manager=rpc_proxy,
     )
+    _module("tools", api_tools=types.SimpleNamespace(endpoint_metrics=lambda func: func))
     module_name = f"{PACKAGE}.api.v2.llm_model_catalog"
     spec = importlib.util.spec_from_file_location(module_name, ROOT / "api" / "v2" / "llm_model_catalog.py")
     module = importlib.util.module_from_spec(spec)

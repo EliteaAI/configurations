@@ -48,3 +48,9 @@ SELECT count(*) FROM {pid}.configuration WHERE type = 'llm_model' AND (data->>'s
 # Only rows still on a past default are rewritten; customized prompts are reported under skipped_custom and left
 # for an admin. Idempotent. Dev already holds hand-edited 2400 versions: if they report skipped_custom, compare
 # them with the new default and re-run after resetting, or leave them as they are.
+
+# LLM model effort levels (#7209): a model whose thinking_type is adaptive or always_on can no longer be saved
+# offering none or minimal, because the provider rejects both. A row that already stores them fails every later
+# update, even a rename, until the levels are removed. Gate, must return no rows per project; for each row listed,
+# open the model in AI Providers -> LLMs, untick None and Minimal and save:
+SELECT id, data->>'name' FROM {pid}.configuration WHERE type = 'llm_model' AND data->>'thinking_type' IN ('adaptive', 'always_on') AND data->'supported_efforts' ?| array['none', 'minimal'];
