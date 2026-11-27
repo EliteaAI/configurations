@@ -13,7 +13,7 @@ Rules are ordered and deterministic (handoff PLAN §3.2); never read credentials
 import re
 
 IDENTITY_VERSION = 1
-NAME_NORMALIZATION = {'lowercase': True, 'replace': {'.': '-', '_': '-'}}
+NAME_SEPARATOR_REPLACEMENTS = {'.': '-', '_': '-'}
 VENDORS = (
     'openai', 'anthropic', 'google', 'meta', 'deepseek', 'xai', 'qwen', 'zai', 'minimax', 'moonshot',
     'nvidia', 'mistral', 'stability', 'microsoft',
@@ -90,7 +90,7 @@ def _low_tier_hint(family):
 
 def normalize_model_name(model_name):
     normalized = (model_name or '').lower()
-    for source, target in NAME_NORMALIZATION['replace'].items():
+    for source, target in NAME_SEPARATOR_REPLACEMENTS.items():
         normalized = normalized.replace(source, target)
     return normalized
 
